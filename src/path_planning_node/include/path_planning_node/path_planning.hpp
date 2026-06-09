@@ -69,9 +69,10 @@ public:
   path_planning() = default;
   ~path_planning() = default;
 
-  std::pair<std::queue<command>, std::queue<path_node>> generate_commands (
-    std::array<std::array<kfs_type, map_height>, map_width> m_map,
-    const std::array<std::array<map_level, map_height>, map_width> &map) const {
+  std::pair<std::queue<command>, std::queue<path_node>> generate_commands(
+      std::array<std::array<kfs_type, map_height>, map_width> m_map,
+      const std::array<std::array<map_level, map_height>, map_width> &map)
+      const {
     std::queue<command> result;
     std::size_t r2kfs_count = 0;
     if (m_map[1][1] == kfs_type::r2kfs) {
@@ -99,7 +100,8 @@ public:
     m_map[1][5] = kfs_type::falsekfs;
 
     auto path = find_path(m_map);
-    auto commands = generate_commands(m_map, path, map, direction::up, r2kfs_count);
+    auto commands =
+        generate_commands(m_map, path, map, direction::up, r2kfs_count);
 
     while (!commands.empty()) {
       result.push(std::move(commands.front()));
@@ -116,6 +118,8 @@ protected:
     std::size_t h_cost; // Heuristic cost from current node to end
     std::array<std::array<bool, map_height>, map_width>
         walked{}; // To track walked nodes
+    std::array<std::array<bool, map_height>, map_width>
+        walked_r2kfs{}; // To track if r2kfs has been walked
     std::size_t f_cost() const { return g_cost + h_cost; } // Total cost
   };
 
@@ -133,7 +137,9 @@ protected:
     }
   };
 
-  std::queue<path_node> find_path(const std::array<std::array<kfs_type, map_height>, map_width> &map) const {
+  std::queue<path_node>
+  find_path(const std::array<std::array<kfs_type, map_height>, map_width> &map)
+      const {
     point start{1, 0};
     point end1{0, 5};
     point end2{2, 5};
@@ -168,10 +174,10 @@ protected:
       const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
       std::queue<path_node> ipath,
       const std::array<std::array<map_level, map_height>, map_width> &map,
-      direction initial_direction,
-      std::size_t initial_grabbed_r2_kfs) const {
+      direction initial_direction, std::size_t initial_grabbed_r2_kfs) const {
     auto original_commands =
-        generate_original_commands(m_map, std::move(ipath), map, initial_direction, initial_grabbed_r2_kfs);
+        generate_original_commands(m_map, std::move(ipath), map,
+                                   initial_direction, initial_grabbed_r2_kfs);
     std::queue<command> optimized_commands;
     int turn_count = 0;
     while (!original_commands.empty()) {
@@ -206,7 +212,9 @@ protected:
     return optimized_commands;
   }
 
-  a_star_queue_t a_star(const std::array<std::array<kfs_type, map_height>, map_width> &m_map, const point &start, const point &end) const {
+  a_star_queue_t
+  a_star(const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
+         const point &start, const point &end) const {
     std::priority_queue<a_star_queue_t, std::pmr::vector<a_star_queue_t>,
                         compare_a_star_node>
         path{compare_a_star_node{}, &pool_resource};
@@ -275,27 +283,62 @@ protected:
           const kfs_type next_type = get_kfs_type(next_point);
           if (next_type == kfs_type::falsekfs)
             return; // Obstacle
-          std::size_t r2kfs_count = get_r2kfs_count(next_point);
-          a_star_node next_node{
-              next_point, next_type,
-              current_node.g_cost + 1 + (r2kfs_count > 0 ? 0 : 1) +
-                  (next_type == kfs_type::r1kfs ? 1 : 0) + [&]() -> int {
-                std::size_t r2kfs_count = 0;
-                for (int i = 0; i < map_width; ++i) {
-                  for (int j = 0; j < map_height; ++j) {
-                    if (current_node.walked[i][j] &&
-                        get_kfs_type({i, j}) == kfs_type::r2kfs) {
-                      ++r2kfs_count;
-                      if (r2kfs_count > 3) {
-                        return 1; // If there's at least one r2kfs in the path,
-                                  // no extra cost for r1kfs
-                      }
-                    }
-                  }
-                }
-                return 0;
-              }(),
-              get_manhattan_distance(next_point, end), current_node.walked};
+          a_star_node next_node{next_point,
+                                next_type,
+                                current_node.g_cost + 1 +
+                                    (next_type == kfs_type::r1kfs ? 1 : 0),
+                                get_manhattan_distance(next_point, end),
+                                current_node.walked,
+                                current_node.walked_r2kfs};
+          auto self_get_r2kfs_count = [&](const point &p) mutable {
+            std::size_t count = 0;
+            for (int i = 0; i < 5; ++i) {
+              point adjacent_point{p.x, p.y};
+              switch (i) {
+              case 0:
+                adjacent_point.y -= 1;
+                break; // Up
+              case 1:
+                adjacent_point.y += 1;
+                break; // Down
+              case 2:
+                adjacent_point.x -= 1;
+                break; // Left
+              case 3:
+                adjacent_point.x += 1;
+                break; // Right
+              case 4:
+                break; // Current node itself
+              default:
+                break;
+              }
+              if (adjacent_point.x >= 0 && adjacent_point.x < map_width &&
+                  adjacent_point.y >= 0 && adjacent_point.y < map_height &&
+                  get_kfs_type(adjacent_point) == kfs_type::r2kfs &&
+                  !next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y]) {
+                next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y] =
+                    true; // Mark as walked to avoid double counting
+                ++count;
+              }
+            }
+            return count;
+          };
+          std::size_t r2kfs_count = self_get_r2kfs_count(next_point);
+          if (r2kfs_count == 0) {
+            next_node.g_cost += 1;
+          }
+          std::size_t walked_r2kfs_count = 0;
+          for (int i = 0; i < map_width; ++i) {
+            for (int j = 0; j < map_height; ++j) {
+              if (current_node.walked[i][j] &&
+                  get_kfs_type({i, j}) == kfs_type::r2kfs) {
+                ++walked_r2kfs_count;
+              }
+            }
+          }
+          if (walked_r2kfs_count > max_r2kfs_can_be_grabed) {
+            ++next_node.g_cost;
+          }
           next_node.walked[next_point.x][next_point.y] = true;
           a_star_queue_t new_path{&pool_resource};
           new_path = current_path;
@@ -341,11 +384,10 @@ protected:
   // template<typename T, typename =
   // std::enable_if_t<std::is_same_v<std::decay_t<T>, std::queue<path_node>>>>
   std::queue<command> generate_original_commands(
-      const std::array<std::array<kfs_type, map_height>, map_width>& m_map,
+      const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
       std::queue<path_node> ipath,
       std::array<std::array<map_level, map_height>, map_width> map,
-      direction initial_direction,
-      std::size_t initial_grabbed_r2_kfs) const {
+      direction initial_direction, std::size_t initial_grabbed_r2_kfs) const {
     // initilize map
     map[0][0] = map_level::ground;
     map[1][0] = map_level::ground;

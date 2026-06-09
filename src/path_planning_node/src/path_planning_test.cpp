@@ -6,7 +6,6 @@
 #include <iostream>
 #include <unordered_set>
 
-
 path_planning planner;
 std::size_t test_count = 0;
 std::ofstream fp("path_planning_test_output.txt");

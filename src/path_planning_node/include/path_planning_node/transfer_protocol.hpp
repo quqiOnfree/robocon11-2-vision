@@ -5,14 +5,13 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <memory_resource>
 #include <type_traits>
 #include <vector>
-#include <iterator>
-#include <functional>
 
 namespace gdut {
 

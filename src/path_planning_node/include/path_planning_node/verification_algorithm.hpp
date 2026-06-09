@@ -102,13 +102,13 @@ protected:
         }
         currentByte = currentByte >> 1;
       } // for CRC bit
-    } // for message byte
+    }   // for message byte
   }
 
   template <typename It>
   bool verify_code_impl(It begin, It end, It code_loc) noexcept {
     uint8_t crc_val = 0;
-    uint8_t* crc = &crc_val; // CRC located in last byte of message
+    uint8_t *crc = &crc_val; // CRC located in last byte of message
     uint8_t currentByte;
     *crc = 0;
     for (auto i = begin; i != end; i++) { // Execute for all bytes of a message
@@ -126,7 +126,7 @@ protected:
         }
         currentByte = currentByte >> 1;
       } // for CRC bit
-    } // for message byte
+    }   // for message byte
     return crc_val == *code_loc;
   }
 };
