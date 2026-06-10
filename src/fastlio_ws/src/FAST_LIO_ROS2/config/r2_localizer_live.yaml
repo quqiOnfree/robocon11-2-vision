@@ -1,0 +1,54 @@
+r2_localizer:
+  ros__parameters:
+    map_path: "/root/fastlio_ws/MapPCD/R2_Field_Map_v1.pcd"
+    metrics_csv_path: "/tmp/r2_localizer_metrics.csv"
+    topics:
+      cloud: "/cloud_registered_body"
+      odom: "/Odometry"
+      initial_pose: "/initialpose"
+    frames:
+      map: "map"
+      odom: "camera_init"
+      body: "body"
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      roll: 0.0
+      pitch: 0.0
+      yaw: 0.0
+    initial_accumulation_frames: 50
+    initial_max_attempts: 3
+    initial_registration_interval_frames: 10
+    registration_interval_frames: 1
+    min_source_points: 100
+    odom_sync_tolerance_sec: 0.03
+    filters:
+      source_voxel_size: 0.20
+      map_voxel_size: 0.20
+      map_overlap_padding: 0.50
+      map_match_radius: 0.60
+      min_range: 0.0
+      max_range: 100.0
+      min_z: -100.0
+      max_z: 100.0
+    ndt:
+      transformation_epsilon: 0.01
+      step_size: 0.10
+      resolution: 0.50
+      maximum_iterations: 35
+    acceptance:
+      max_fitness_score: 0.15
+      max_initial_fitness_score: 0.12
+      min_overlap_ratio: 0.08
+      min_initial_overlap_ratio: 0.06
+      max_initial_translation: 0.50
+      max_initial_yaw: 0.35
+      max_initial_roll_pitch: 0.35
+      max_correction_translation: 0.25
+      max_correction_yaw: 0.15
+      max_correction_roll_pitch: 0.10
+    map_publish_period_sec: 2.0
+    pose_report:
+      window_sec: 3.0
+      min_samples: 5
