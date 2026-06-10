@@ -43,6 +43,7 @@ class BlockItem(QGraphicsRectItem):
         super().__init__(x, y, width, height)
         self.block_level = block_level
         self.block_type = block_type
+        self.is_path = False
         self.setBrush(self.get_color())
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
 
@@ -62,6 +63,10 @@ class BlockItem(QGraphicsRectItem):
         self.setBrush(self.get_color())
         self.update()
 
+    def update_path_status(self, is_path: bool):
+        self.is_path = is_path
+        self.update()
+
     def paint(
         self,
         painter: QPainter,
@@ -70,6 +75,15 @@ class BlockItem(QGraphicsRectItem):
     ):
         # 先绘制矩形背景
         super().paint(painter, option, widget)
+
+        # 如果是路径上的方块，绘制一个半透明的覆盖层
+        if (self.is_path):
+            painter.setBrush(QColor(255, 0, 255))
+            rect = self.rect()
+            small_rect = rect.adjusted(20, 20, -20, -20)
+            painter.drawRect(small_rect)
+
+        # 根据 block_type 绘制不同的标识
 
         types = [
             ("空", BlockType.Empty, QColor("lightgray"), QColor("black")),
@@ -222,6 +236,13 @@ class MainWindow(QMainWindow):
         self.print_grid()
         super().closeEvent(event)
 
+    @Slot(list)
+    def update_path(self, path_data: list):
+        for row in range(len(self.grid_items)):
+            for col in range(len(self.grid_items[row])):
+                is_path = [row, col + 1] in path_data
+                self.grid_items[row][col].update_path_status(is_path)
+
     # ---------- 核心逻辑：把选中的方块设为指定类型 ----------
     def set_selected_type(self, new_type: BlockType):
         selected_items = self.graphics_scene.selectedItems()
@@ -261,11 +282,18 @@ class MainWindow(QMainWindow):
         QMessageBox.information(self, "发布成功", "方格数据已发布到 ROS2！")
 
 
-class Ros2Node(Node, QObject):
+class PathSignalEmitter(QObject):
+    path_signal = Signal(list)
+
+
+class Ros2Node(Node):
+
     def __init__(self):
-        super().__init__("hand_input_path_node")
+        Node.__init__(self, "hand_input_path_node")
+        self.path_signal = PathSignalEmitter()
         # 这里可以初始化 ROS2 节点和发布者
         self.publisher = self.create_publisher(String, "grid_data", 10)
+        self.subscriber = self.create_subscription(String, "path_commands", self.path_received, 10)
 
     @Slot(dict)
     def publish_grid(self, grid: dict):
@@ -279,6 +307,14 @@ class Ros2Node(Node, QObject):
         self.publisher.publish(msg)
         print("Published grid data:", json_data)
 
+    def path_received(self, msg: String):
+        try:
+            path_data = json.loads(msg.data)
+            self.path_signal.path_signal.emit(path_data['path'])
+            print("Received path command:", path_data)
+        except json.JSONDecodeError:
+            print("Failed to decode path command:", msg.data)
+
 
 def main():
     rclpy.init()
@@ -286,6 +322,7 @@ def main():
     window = MainWindow()
     node = Ros2Node()
     window.emit_grid.connect(node.publish_grid)
+    node.path_signal.path_signal.connect(window.update_path)
     window.show()
     timer = QTimer()
     timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0.01))
@@ -298,7 +335,6 @@ def main():
         rclpy.shutdown()
 
     app.aboutToQuit.connect(cleanup)
-
     app.exec()
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <span>
 
 #include "path_planning_node/path_planning.hpp"
 
@@ -13,6 +14,14 @@ public:
     RCLCPP_INFO(this->get_logger(), "Path Planning Node has been started.");
     path_publisher_ =
         this->create_publisher<std_msgs::msg::String>("path_commands", 10);
+    serial_publisher_ =
+        this->create_publisher<std_msgs::msg::String>("serial_data", 10);
+    serial_subscriber_ = this->create_subscription<std_msgs::msg::String>(
+        "serial_data", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
+          std::uint16_t code = 0; // Extract code from msg->data
+          std::vector<std::uint8_t> data; // Extract data from msg->data
+          process_serial_data(code, data);
+        });
     grid_subscriber_ = this->create_subscription<std_msgs::msg::String>(
         "grid_data", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
           RCLCPP_INFO(this->get_logger(), "Received grid data: %s",
@@ -47,6 +56,11 @@ public:
 
             auto [commands, path] =
                 planner_->generate_commands(m_map, level_map);
+
+            {
+              std::lock_guard<std::mutex> lock(command_queue_mutex_);
+              command_queue_ = commands;
+            }
 
             nlohmann::json output_json = nlohmann::json::object();
             output_json["path"] = nlohmann::json::array();
@@ -93,6 +107,8 @@ public:
               case path_planning::command::move_right:
                 std::cout << "Move Right\n";
                 break;
+              default:
+                break;
               }
               commands.pop();
             }
@@ -101,9 +117,44 @@ public:
                          e.what());
           }
         });
+      }
+
+  void send_packet(std::uint16_t code, std::span<const std::uint8_t> data) {
+    std_msgs::msg::String msg;
+    RCLCPP_INFO(this->get_logger(), "Sending packet - Code: %u, Data size: %zu bytes",
+                code, data.size());
+    serial_publisher_->publish(msg);
+  }
+
+  void send_command(path_planning::command cmd) {
+    send_packet(static_cast<std::uint16_t>(cmd), {});
+  }
+
+protected:
+  void process_serial_data(std::uint16_t code, std::span<const std::uint8_t> data) {
+    RCLCPP_INFO(this->get_logger(), "Processing serial data - Code: %u, Data size: %zu bytes",
+                code, data.size());
+    switch (static_cast<path_planning::command>(code)) {
+    case path_planning::command::request_command: {
+        std::lock_guard<std::mutex> lock(command_queue_mutex_);
+        if (command_queue_.empty()) {
+          send_command(path_planning::command::complete_task);
+        } else {
+          send_command(command_queue_.front());
+          command_queue_.pop();
+        }
+      }
+      break;
+    default:
+      break;
+    }
   }
 
 private:
+  std::queue<path_planning::command> command_queue_;
+  mutable std::mutex command_queue_mutex_;
   std::shared_ptr<rclcpp::Subscription<std_msgs::msg::String>> grid_subscriber_;
   std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> path_publisher_;
+  std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> serial_publisher_;
+  std::shared_ptr<rclcpp::Subscription<std_msgs::msg::String>> serial_subscriber_;
 };

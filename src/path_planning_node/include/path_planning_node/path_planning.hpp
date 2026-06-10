@@ -28,16 +28,19 @@ public:
 
   enum class direction { up, left, down, right };
 
-  enum class command {
-    move_forward,
-    turn_left,
-    move_backward,
-    turn_right,
-    move_left,
-    move_right,
-    grab_lower_r2_kfs,
-    grab_higher_r2_kfs,
-    grab_highest_r2_kfs
+  enum class command : std::uint16_t {
+    request_command = 0x0301,
+    move_forward = 0x0311,
+    turn_left = 0x0312,
+    move_backward = 0x0313,
+    turn_right = 0x0314,
+    move_left = 0x0315,
+    move_right = 0x0316,
+    grab_lower_r2_kfs = 0x0317,
+    grab_higher_r2_kfs = 0x0318,
+    grab_highest_r2_kfs = 0x0319,
+    release_r2_kfs_and_grab_newer_r2_kfs = 0x031A,
+    complete_task = 0x031B
   };
 
   template <typename T,
@@ -220,7 +223,7 @@ protected:
         path{compare_a_star_node{}, &pool_resource};
 
     auto get_kfs_type = [&m_map](const point &p) -> kfs_type {
-      if (p.x < 0 || p.x >= map_width || p.y < 0 || p.y >= map_height) {
+      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 || p.y >= static_cast<int>(map_height)) {
         throw std::out_of_range("Point is out of map bounds");
       }
       return m_map[p.x][p.y];
@@ -245,36 +248,36 @@ protected:
         return current_path;
       }
 
-      auto get_r2kfs_count = [&](const point &p) {
-        std::size_t count = 0;
-        for (int i = 0; i < 5; ++i) {
-          point adjacent_point{p.x, p.y};
-          switch (i) {
-          case 0:
-            adjacent_point.y -= 1;
-            break; // Up
-          case 1:
-            adjacent_point.y += 1;
-            break; // Down
-          case 2:
-            adjacent_point.x -= 1;
-            break; // Left
-          case 3:
-            adjacent_point.x += 1;
-            break; // Right
-          case 4:
-            break; // Current node itself
-          default:
-            break;
-          }
-          if (adjacent_point.x >= 0 && adjacent_point.x < map_width &&
-              adjacent_point.y >= 0 && adjacent_point.y < map_height &&
-              get_kfs_type(adjacent_point) == kfs_type::r2kfs) {
-            ++count;
-          }
-        }
-        return count;
-      };
+      // auto get_r2kfs_count = [&](const point &p) {
+      //   std::size_t count = 0;
+      //   for (int i = 0; i < 5; ++i) {
+      //     point adjacent_point{p.x, p.y};
+      //     switch (i) {
+      //     case 0:
+      //       adjacent_point.y -= 1;
+      //       break; // Up
+      //     case 1:
+      //       adjacent_point.y += 1;
+      //       break; // Down
+      //     case 2:
+      //       adjacent_point.x -= 1;
+      //       break; // Left
+      //     case 3:
+      //       adjacent_point.x += 1;
+      //       break; // Right
+      //     case 4:
+      //       break; // Current node itself
+      //     default:
+      //       break;
+      //     }
+      //     if (adjacent_point.x >= 0 && adjacent_point.x < map_width &&
+      //         adjacent_point.y >= 0 && adjacent_point.y < map_height &&
+      //         get_kfs_type(adjacent_point) == kfs_type::r2kfs) {
+      //       ++count;
+      //     }
+      //   }
+      //   return count;
+      // };
 
       for (int i = 0; i < 4; ++i) {
         auto generate_next_path = [&](point next_point) {
@@ -312,8 +315,8 @@ protected:
               default:
                 break;
               }
-              if (adjacent_point.x >= 0 && adjacent_point.x < map_width &&
-                  adjacent_point.y >= 0 && adjacent_point.y < map_height &&
+              if (adjacent_point.x >= 0 && adjacent_point.x < static_cast<int>(map_width) &&
+                  adjacent_point.y >= 0 && adjacent_point.y < static_cast<int>(map_height) &&
                   get_kfs_type(adjacent_point) == kfs_type::r2kfs &&
                   !next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y]) {
                 next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y] =
@@ -328,8 +331,8 @@ protected:
             next_node.g_cost += 1;
           }
           std::size_t walked_r2kfs_count = 0;
-          for (int i = 0; i < map_width; ++i) {
-            for (int j = 0; j < map_height; ++j) {
+          for (int i = 0; i < static_cast<int>(map_width); ++i) {
+            for (int j = 0; j < static_cast<int>(map_height); ++j) {
               if (current_node.walked[i][j] &&
                   get_kfs_type({i, j}) == kfs_type::r2kfs) {
                 ++walked_r2kfs_count;
@@ -357,7 +360,7 @@ protected:
         case 1: // Down
         {
           point next_point{current_node.p.x, current_node.p.y + 1};
-          if (next_point.y >= map_height)
+          if (next_point.y >= static_cast<int>(map_height))
             continue; // Out of bounds
           generate_next_path(next_point);
         } break;
@@ -371,7 +374,7 @@ protected:
         case 3: // Right
         {
           point next_point{current_node.p.x + 1, current_node.p.y};
-          if (next_point.x >= map_width)
+          if (next_point.x >= static_cast<int>(map_width))
             continue; // Out of bounds
           generate_next_path(next_point);
         } break;
@@ -426,7 +429,7 @@ protected:
     auto local_map = m_map;
 
     auto get_kfs_type = [&m_map](const point &p) -> kfs_type {
-      if (p.x < 0 || p.x >= map_width || p.y < 0 || p.y >= map_height) {
+      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 || p.y >= static_cast<int>(map_height)) {
         throw std::out_of_range("Point is out of map bounds");
       }
       return m_map[p.x][p.y];
@@ -540,8 +543,8 @@ protected:
           };
           break;
         }
-        if (adjacent_point.x < 0 || adjacent_point.x >= map_width ||
-            adjacent_point.y < 0 || adjacent_point.y >= map_height) {
+        if (adjacent_point.x < 0 || adjacent_point.x >= static_cast<int>(map_width) ||
+            adjacent_point.y < 0 || adjacent_point.y >= static_cast<int>(map_height)) {
           return std::nullopt; // Out of bounds
         }
         return adjacent_point;
@@ -549,8 +552,8 @@ protected:
 
       auto get_kfs = [&](point p) {
         point adjacent_point = p;
-        if (adjacent_point.x < 0 || adjacent_point.x >= map_width ||
-            adjacent_point.y < 0 || adjacent_point.y >= map_height) {
+        if (adjacent_point.x < 0 || adjacent_point.x >= static_cast<int>(map_width) ||
+            adjacent_point.y < 0 || adjacent_point.y >= static_cast<int>(map_height)) {
           return kfs_type::empty;
         }
         return local_map[p.x][p.y];

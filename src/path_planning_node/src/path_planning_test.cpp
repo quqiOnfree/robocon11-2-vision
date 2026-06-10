@@ -153,51 +153,23 @@ int main() {
   // path_planning::point end2{2, 5};
 
   for (const auto &map : test_maps) {
-    for (int i = 0; i < path_planning::map_width; ++i) {
-      for (int j = 0; j < path_planning::map_height; ++j) {
-        planner.set_kfs_type({i, j}, map[i][j]);
-      }
-    }
-
     std::cout << "Test case " << ++test_count << ":\n";
 
-    auto path = planner.find_path();
-    auto commands = planner.generate_commands(path, level_map,
-                                              path_planning::direction::up);
+    auto [commands, path] = planner.generate_commands(map, level_map);
 
-    // Remove the obstacle for visualization
-    planner.set_kfs_type({1, 5}, path_planning::kfs_type::empty);
-    planner.set_kfs_type({0, 0}, path_planning::kfs_type::empty);
-    planner.set_kfs_type({2, 0}, path_planning::kfs_type::empty);
-
-    std::cout << "Grid:\n";
-    std::cout << "KFS Type:\n";
-    std::cout << "Empty: " << static_cast<int>(path_planning::kfs_type::empty)
-              << '\n';
-    std::cout << "R1KFS: " << static_cast<int>(path_planning::kfs_type::r1kfs)
-              << '\n';
-    std::cout << "R2KFS: " << static_cast<int>(path_planning::kfs_type::r2kfs)
-              << '\n';
-    std::cout << "False KFS: "
-              << static_cast<int>(path_planning::kfs_type::falsekfs) << '\n';
-    for (int j = 0; j < path_planning::map_height; ++j) {
-      for (int i = 0; i < path_planning::map_width; ++i) {
-        std::cout << static_cast<int>(planner.get_kfs_type({i, j})) << " ";
-      }
-      std::cout << "\n";
+    std::cout << "Generated path:\n";
+    std::queue<path_planning::path_node> temp_path = path;
+    while (!temp_path.empty()) {
+      const auto &node = temp_path.front();
+      std::cout << "(" << node.p.x << ", " << node.p.y << ") - "
+                << static_cast<int>(node.type) << "\n";
+      temp_path.pop();
     }
 
-    std::cout << "Path found:\n";
-    while (!path.empty()) {
-      const auto &node = path.front();
-      std::cout << "(" << node.p.x << ", " << node.p.y
-                << ") - Type: " << static_cast<int>(node.type) << "\n";
-      path.pop();
-    }
-
-    std::cout << "Commands generated:\n";
-    while (!commands.empty()) {
-      switch (commands.front()) {
+    std::cout << "Generated commands:\n";
+    std::queue<path_planning::command> temp_commands = commands;
+    while (!temp_commands.empty()) {
+      switch (temp_commands.front()) {
       case path_planning::command::move_forward:
         std::cout << "Move Forward\n";
         break;
@@ -210,13 +182,26 @@ int main() {
       case path_planning::command::turn_right:
         std::cout << "Turn Right\n";
         break;
+      case path_planning::command::move_left:
+        std::cout << "Move Left\n";
+        break;
+      case path_planning::command::move_right:
+        std::cout << "Move Right\n";
+        break;
       case path_planning::command::grab_lower_r2_kfs:
         std::cout << "Grab Lower R2 KFS\n";
         break;
       case path_planning::command::grab_higher_r2_kfs:
         std::cout << "Grab Higher R2 KFS\n";
+        break;
+      case path_planning::command::grab_highest_r2_kfs:
+        std::cout << "Grab Highest R2 KFS\n";
+        break;
+      default:
+        std::cout << "Unknown Command\n";
+        break;
       }
-      commands.pop();
+      temp_commands.pop();
     }
   }
 

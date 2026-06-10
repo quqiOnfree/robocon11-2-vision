@@ -37,16 +37,15 @@ target_link_libraries(path_planning_node PRIVATE
   ${std_msgs_LIBRARIES}
   nlohmann_json)
 
-# add_executable(path_planning_test
-#   src/path_planning_test.cpp)
-# target_include_directories(path_planning_test PRIVATE
-#   ${std_msgs_INCLUDE_DIRS}
-#   include)
-# target_link_libraries(path_planning_test PRIVATE
-#   rclcpp::rclcpp
-#   ${std_msgs_LIBRARIES}
-#   nlohmann_json)
-
+add_executable(path_planning_test
+  src/path_planning_test.cpp)
+target_include_directories(path_planning_test PRIVATE
+  ${std_msgs_INCLUDE_DIRS}
+  include)
+target_link_libraries(path_planning_test PRIVATE
+  rclcpp::rclcpp
+  ${std_msgs_LIBRARIES}
+  nlohmann_json)
 
 install(TARGETS path_planning_node
   DESTINATION lib/${PROJECT_NAME})
