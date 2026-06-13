@@ -1,3 +1,6 @@
 [submodule "src/path_planning_node/json"]
 	path = src/path_planning_node/json
 	url = https://github.com/nlohmann/json.git
+[submodule "src/r2_serial_ws/src/r2_serial/asio"]
+	path = src/r2_serial_ws/src/r2_serial/asio
+	url = https://github.com/chriskohlhoff/asio.git
