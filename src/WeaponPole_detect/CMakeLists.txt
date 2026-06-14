@@ -11,65 +11,75 @@ find_package(std_msgs REQUIRED)
 find_package(onnxruntime REQUIRED)
 find_package(fast_lio REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(r2_serial REQUIRED)
+
+# ---- asio 头文件库 ----
+add_library(asio INTERFACE)
+target_include_directories(asio INTERFACE ${CMAKE_SOURCE_DIR}/asio/include)
 
 # ---- 公共头文件 ----
 file(GLOB INCLUDE_FILES "include/*.hpp")
 
-add_library(asio INTERFACE)
-target_include_directories(asio INTERFACE
-  asio/include)
-
 # ====================================================================
-# ---- weapon 检测节点 ----
+# ---- weapon_pole 检测节点 ----
 # ====================================================================
-add_executable(weapon_node
+add_executable(weapon_pole_node
   ${INCLUDE_FILES}
-  src/weapon_node.cpp)
+  src/weapon_pole_node.cpp)
 
-ament_target_dependencies(weapon_node PUBLIC rclcpp std_msgs fast_lio)
+ament_target_dependencies(weapon_pole_node PUBLIC rclcpp std_msgs fast_lio)
 
-target_include_directories(weapon_node PUBLIC
+target_include_directories(weapon_pole_node PUBLIC
   include/
   ${OpenCV_INCLUDE_DIRS}
 )
 
-target_link_libraries(weapon_node PUBLIC
+target_link_libraries(weapon_pole_node PUBLIC
   ${OpenCV_LIBS}
+  ${r2_serial_TARGETS}
   onnxruntime::onnxruntime
+  asio
   $<$<BOOL:${WIN32}>:ws2_32>
 )
 
-target_compile_definitions(weapon_node PUBLIC
+target_compile_definitions(weapon_pole_node PUBLIC
   $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0A00>
 )
 
 # ====================================================================
 # ---- pole 检测节点 ----
 # ====================================================================
-add_executable(pole_node
-  ${INCLUDE_FILES}
-  src/pole_node.cpp)
+# add_executable(pole_node
+#   ${INCLUDE_FILES}
+#   src/pole_node.cpp)
 
-ament_target_dependencies(pole_node PUBLIC rclcpp std_msgs fast_lio)
+# ament_target_dependencies(pole_node PUBLIC rclcpp std_msgs fast_lio)
 
-target_include_directories(pole_node PUBLIC
-  include/
-  ${OpenCV_INCLUDE_DIRS}
-)
+# target_include_directories(pole_node PUBLIC
+#   include/
+#   ${OpenCV_INCLUDE_DIRS}
+#   ${ONNXRUNTIME_INCLUDE_DIRS}
+# )
 
-target_link_libraries(pole_node PUBLIC
-  ${OpenCV_LIBS}
-  asio
-  onnxruntime::onnxruntime
-  $<$<BOOL:${WIN32}>:ws2_32>
-)
+# target_link_libraries(pole_node PUBLIC
+#   ${OpenCV_LIBS}
+#   ${ONNXRUNTIME_LIBRARIES}
+#   asio
+#   $<$<BOOL:${WIN32}>:ws2_32>
+# )
 
-target_compile_definitions(pole_node PUBLIC
-  $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0A00>
-)
+# target_compile_definitions(pole_node PUBLIC
+#   $<$<BOOL:${WIN32}>:_WIN32_WINNT=0x0A00>
+# )
+
+# set_target_properties(pole_node PROPERTIES
+#   BUILD_RPATH "${ONNXRUNTIME_LIB_DIR}"
+#   INSTALL_RPATH "${ONNXRUNTIME_LIB_DIR}"
+#   INSTALL_RPATH_USE_LINK_PATH TRUE
+# )
 
 # ---- 安装 ----
-install(TARGETS weapon_node pole_node
+install(TARGETS weapon_pole_node
   DESTINATION lib/${PROJECT_NAME})
 
 install(DIRECTORY
