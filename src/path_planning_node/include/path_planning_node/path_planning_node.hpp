@@ -4,24 +4,117 @@
 #include <nlohmann/json.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <span>
 
 #include "path_planning_node/path_planning.hpp"
 
+class PathPlanningSenderNReceiver {
+public:
+  PathPlanningSenderNReceiver(rclcpp::Node* node) : node_(node) {
+    path_forward_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/forward", 10);
+    path_backward_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/backward", 10);
+    path_turn_left_90_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/turn_left_90", 10);
+    path_turn_right_90_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/turn_right_90", 10);
+    path_shift_left_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/shift_left", 10);
+    path_shift_right_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/shift_right", 10);
+    path_grab_low_kfs_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/grab_low_kfs", 10);
+    path_grab_mid_kfs_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/grab_mid_kfs", 10);
+    path_grab_high_kfs_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/grab_high_kfs", 10);
+    path_replace_kfs_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/replace_kfs", 10);
+    path_no_command_sub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/no_command", 10);
+  
+    path_request_pub_ = node_->create_subscription<std_msgs::msg::Empty>(
+        "/r2_serial/uplink/path_request_next", 10,
+        [this](const std_msgs::msg::Empty::SharedPtr) {
+          if (command_callback_) {
+            command_callback_();
+          }
+        });
+  }
+
+  void setCommandCallback(std::function<void()> callback) {
+    command_callback_ = std::move(callback);
+  }
+
+  void publish(path_planning::command cmd) {
+    std_msgs::msg::Empty msg;
+    switch (cmd) {
+    case path_planning::command::move_forward:
+      path_forward_sub_->publish(msg);
+      break;
+    case path_planning::command::move_backward:
+      path_backward_sub_->publish(msg);
+      break;
+    case path_planning::command::turn_left:
+      path_turn_left_90_sub_->publish(msg);
+      break;
+    case path_planning::command::turn_right:
+      path_turn_right_90_sub_->publish(msg);
+      break;
+    case path_planning::command::move_left:
+      path_shift_left_sub_->publish(msg);
+      break;
+    case path_planning::command::move_right:
+      path_shift_right_sub_->publish(msg);
+      break;
+    case path_planning::command::grab_lower_r2_kfs:
+      path_grab_low_kfs_sub_->publish(msg);
+      break;
+    case path_planning::command::grab_higher_r2_kfs:
+      path_grab_mid_kfs_sub_->publish(msg);
+      break;
+    case path_planning::command::grab_highest_r2_kfs:
+      path_grab_high_kfs_sub_->publish(msg);
+      break;
+    default:
+      path_no_command_sub_->publish(msg);
+      break;
+    }
+  }
+
+private:
+  rclcpp::Node* node_;
+  std::function<void()> command_callback_;
+
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_forward_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_backward_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_turn_left_90_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_turn_right_90_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_shift_left_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_shift_right_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_grab_low_kfs_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_grab_mid_kfs_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_grab_high_kfs_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
+
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_request_pub_;
+};
+
 class PathPlanningNode : public rclcpp::Node {
 public:
-  PathPlanningNode() : Node("path_planning_node") {
+  PathPlanningNode() : Node("path_planning_node"), sender_receiver_(this) {
     RCLCPP_INFO(this->get_logger(), "Path Planning Node has been started.");
+
+    // set up the command callback to handle commands from the sender_receiver_
+    sender_receiver_.setCommandCallback([this]() {
+      path_planning::command cmd;
+      {
+        std::lock_guard<std::mutex> lock(command_queue_mutex_);
+        if (command_queue_.empty()) {
+          cmd = path_planning::command::complete_task;
+        } else {
+          cmd = std::move(command_queue_.front());
+          command_queue_.pop();
+        }
+      }
+      this->send_command(cmd);
+    });
+
     path_publisher_ =
         this->create_publisher<std_msgs::msg::String>("path_commands", 10);
-    serial_publisher_ =
-        this->create_publisher<std_msgs::msg::String>("serial_data", 10);
-    serial_subscriber_ = this->create_subscription<std_msgs::msg::String>(
-        "serial_data", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
-          std::uint16_t code = 0; // Extract code from msg->data
-          std::vector<std::uint8_t> data; // Extract data from msg->data
-          process_serial_data(code, data);
-        });
+
     grid_subscriber_ = this->create_subscription<std_msgs::msg::String>(
         "grid_data", 10, [this](const std_msgs::msg::String::SharedPtr msg) {
           RCLCPP_INFO(this->get_logger(), "Received grid data: %s",
@@ -119,15 +212,8 @@ public:
         });
       }
 
-  void send_packet(std::uint16_t code, std::span<const std::uint8_t> data) {
-    std_msgs::msg::String msg;
-    RCLCPP_INFO(this->get_logger(), "Sending packet - Code: %u, Data size: %zu bytes",
-                code, data.size());
-    serial_publisher_->publish(msg);
-  }
-
   void send_command(path_planning::command cmd) {
-    send_packet(static_cast<std::uint16_t>(cmd), {});
+    sender_receiver_.publish(cmd);
   }
 
 protected:
@@ -155,6 +241,5 @@ private:
   mutable std::mutex command_queue_mutex_;
   std::shared_ptr<rclcpp::Subscription<std_msgs::msg::String>> grid_subscriber_;
   std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> path_publisher_;
-  std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> serial_publisher_;
-  std::shared_ptr<rclcpp::Subscription<std_msgs::msg::String>> serial_subscriber_;
+  PathPlanningSenderNReceiver sender_receiver_;
 };

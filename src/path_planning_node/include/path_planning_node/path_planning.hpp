@@ -248,37 +248,6 @@ protected:
         return current_path;
       }
 
-      // auto get_r2kfs_count = [&](const point &p) {
-      //   std::size_t count = 0;
-      //   for (int i = 0; i < 5; ++i) {
-      //     point adjacent_point{p.x, p.y};
-      //     switch (i) {
-      //     case 0:
-      //       adjacent_point.y -= 1;
-      //       break; // Up
-      //     case 1:
-      //       adjacent_point.y += 1;
-      //       break; // Down
-      //     case 2:
-      //       adjacent_point.x -= 1;
-      //       break; // Left
-      //     case 3:
-      //       adjacent_point.x += 1;
-      //       break; // Right
-      //     case 4:
-      //       break; // Current node itself
-      //     default:
-      //       break;
-      //     }
-      //     if (adjacent_point.x >= 0 && adjacent_point.x < map_width &&
-      //         adjacent_point.y >= 0 && adjacent_point.y < map_height &&
-      //         get_kfs_type(adjacent_point) == kfs_type::r2kfs) {
-      //       ++count;
-      //     }
-      //   }
-      //   return count;
-      // };
-
       for (int i = 0; i < 4; ++i) {
         auto generate_next_path = [&](point next_point) {
           if (current_node.walked[next_point.x][next_point.y])

@@ -12,6 +12,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(r2_serial REQUIRED)
 
 if(BUILD_TESTING)
   find_package(ament_lint_auto REQUIRED)
@@ -35,6 +36,7 @@ target_include_directories(path_planning_node PRIVATE
 target_link_libraries(path_planning_node PRIVATE
   rclcpp::rclcpp
   ${std_msgs_LIBRARIES}
+  ${r2_serial_TARGETS}
   nlohmann_json)
 
 add_executable(path_planning_test

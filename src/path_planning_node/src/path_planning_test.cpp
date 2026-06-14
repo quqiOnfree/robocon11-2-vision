@@ -91,8 +91,8 @@ int main() {
       path_planning::kfs_type::falsekfs; // Set an obstacle at (1, 5)
   auto func = [&](int idx) {
     if (idx == -1) {
-      for (int i = 0; i < path_planning::map_width; ++i) {
-        for (int j = 2; j < path_planning::map_height - 1; ++j) {
+      for (int i = 0; i < static_cast<int>(path_planning::map_width); ++i) {
+        for (int j = 2; j < static_cast<int>(path_planning::map_height) - 1; ++j) {
           if (empty_map[i][j] != path_planning::kfs_type::empty) {
             continue; // Skip already set nodes
           }
@@ -102,14 +102,14 @@ int main() {
         }
       }
     }
-    if (idx >= types.size()) {
+    if (idx >= static_cast<int>(types.size())) {
       if (test_maps.find(empty_map) == test_maps.end()) {
         test_maps.insert(empty_map);
       }
       return;
     }
-    for (int i = 0; i < path_planning::map_width; ++i) {
-      for (int j = 1; j < path_planning::map_height - 1; ++j) {
+    for (int i = 0; i < static_cast<int>(path_planning::map_width); ++i) {
+      for (int j = 1; j < static_cast<int>(path_planning::map_height) - 1; ++j) {
         if (empty_map[i][j] != path_planning::kfs_type::empty) {
           continue; // Skip already set nodes
         }
