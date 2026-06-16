@@ -4,6 +4,3 @@
 [submodule "src/r2_serial_ws/src/r2_serial/asio"]
 	path = src/r2_serial_ws/src/r2_serial/asio
 	url = https://github.com/chriskohlhoff/asio.git
-[submodule "/home/qqof/robocon11-2-vision/src/WeaponPole_detect/asio"]
-	path = /home/qqof/robocon11-2-vision/src/WeaponPole_detect/asio
-	url = https://github.com/chriskohlhoff/asio.git

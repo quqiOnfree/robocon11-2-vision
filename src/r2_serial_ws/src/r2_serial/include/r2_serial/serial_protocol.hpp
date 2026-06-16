@@ -6,11 +6,11 @@
 
 namespace r2_serial::protocol {
 
-// 视觉与下位机共享的消息：0x0001/0x0002 是视觉下发，0x0003/0x0004 是下位机切换视觉状态。
-inline constexpr std::uint16_t kWeaponFollow = 0x0001;
-inline constexpr std::uint16_t kPoleFollow = 0x0002;
-inline constexpr std::uint16_t kVisionWeaponState = 0x0003;
-inline constexpr std::uint16_t kVisionPoleState = 0x0004;
+// 视觉与下位机共享的消息：0x0001 是视觉下发跟随量；0x0002/0x0003/0x0004 都按下位机视觉状态控制处理。
+inline constexpr std::uint16_t kVisionFollow = 0x0001;
+inline constexpr std::uint16_t kVisionStateLegacy = 0x0002;
+inline constexpr std::uint16_t kVisionState = 0x0003;
+inline constexpr std::uint16_t kVisionStateCompat = 0x0004;
 
 // 上位机 -> 下位机：导航、台阶、急停和升降模式命令。
 inline constexpr std::uint16_t kPoseUpdate = 0x0101;

@@ -15,6 +15,7 @@
 #include <iomanip>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -74,8 +75,9 @@ public:
       : Node("r2_data_downlink"),
         work_guard_(asio::make_work_guard(io_context_)) {
     readParameters();
-    initializeSerial();
+    initializeSerial(true);
     createInterfaces();
+    createReconnectTimer();
 
     RCLCPP_INFO(get_logger(),
                 "R2 serial bridge ready: serial=%s, raw_downlink=%s, raw_uplink=%s, pose_odom=%s",
@@ -102,6 +104,8 @@ private:
     write_min_interval_ms_ = declare_parameter<int>("write_rate_limit.min_interval_ms", 10);
     debug_print_pose_tx_ = declare_parameter<bool>("debug.print_pose_tx", false);
     debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 5000);
+    reconnect_enabled_ = declare_parameter<bool>("reconnect.enabled", true);
+    reconnect_interval_ms_ = declare_parameter<int>("reconnect.interval_ms", 1000);
 
     raw_packet_topic_ = declare_parameter<std::string>(
         "topics.raw_packet", "/r2_serial/downlink/packet");
@@ -158,34 +162,96 @@ private:
         "topics.uplink_event_code_r2", "/r2/uplink/event_code");
     path_request_topic_ = declare_parameter<std::string>(
         "topics.path.request_next", "/r2_serial/uplink/path_request_next");
-    vision_weapon_state_topic_ = declare_parameter<std::string>(
-        "topics.vision_weapon_state", "/vision/weapon_cmd_state_2");
-    vision_pole_state_topic_ = declare_parameter<std::string>(
-        "topics.vision_pole_state", "/vision/pole_cmd_state_2");
+    vision_weapon_pole_state_topic_ = declare_parameter<std::string>(
+        "topics.vision_weapon_pole_state", "/vision/weapon_pole_cmd_state_2");
   }
 
-  void initializeSerial() {
-    // 串口只在这里打开一次，其他节点通过 ROS2 话题排队下发。
+  void initializeSerial(bool initial_attempt) {
+    // 串口只在这里打开；断线重连时会重新创建连接对象，并丢弃旧连接里的待发包。
+    {
+      std::lock_guard<std::mutex> lock(serial_mutex_);
+      if (serial_connector_ && serial_connected_.load()) {
+        return;
+      }
+    }
+
     try {
-      serial_connector_ = std::make_unique<SerialConnector>(serial_port_, io_context_);
+      auto connector = std::make_shared<SerialConnector>(serial_port_, io_context_);
       const int interval_ms = write_rate_limit_enabled_
                                   ? std::max(0, write_min_interval_ms_)
                                   : 0;
-      serial_connector_->setMinWriteInterval(std::chrono::milliseconds(interval_ms));
-      RCLCPP_INFO(get_logger(), "串口下发限速: %s, 最小间隔=%d ms",
-                  interval_ms > 0 ? "开启" : "关闭", interval_ms);
+      connector->setMinWriteInterval(std::chrono::milliseconds(interval_ms));
+      connector->setErrorHandler([this](std::error_code ec) {
+        handleSerialError(ec);
+      });
       if (serial_debug_raw_) {
-        serial_connector_->setRawReceiveHandler(
+        connector->setRawReceiveHandler(
             [this](const std::uint8_t *data, std::size_t size) {
               RCLCPP_INFO(get_logger(), "串口原始接收: %zu bytes [%s]", size,
                           bytesToHex(data, size).c_str());
             });
       }
+
+      {
+        std::lock_guard<std::mutex> lock(serial_mutex_);
+        serial_connector_ = std::move(connector);
+        serial_connected_.store(true);
+      }
+
+      if (!io_context_thread_.joinable()) {
+        io_context_thread_ = std::thread([this]() { io_context_.run(); });
+      }
       startAsyncReceive();
-      io_context_thread_ = std::thread([this]() { io_context_.run(); });
       RCLCPP_INFO(get_logger(), "串口配置成功: %s, 115200 8N1", serial_port_.c_str());
+      RCLCPP_INFO(get_logger(), "串口下发限速: %s, 最小间隔=%d ms",
+                  interval_ms > 0 ? "开启" : "关闭", interval_ms);
     } catch (const std::exception &ex) {
-      RCLCPP_ERROR(get_logger(), "串口启动失败: %s (%s)", serial_port_.c_str(), ex.what());
+      {
+        std::lock_guard<std::mutex> lock(serial_mutex_);
+        serial_connector_.reset();
+        serial_connected_.store(false);
+      }
+      if (initial_attempt) {
+        RCLCPP_ERROR(get_logger(), "串口启动失败: %s (%s)，等待自动重连",
+                     serial_port_.c_str(), ex.what());
+      } else {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
+                             "串口重连失败: %s (%s)", serial_port_.c_str(), ex.what());
+      }
+    }
+  }
+
+  void createReconnectTimer() {
+    if (!reconnect_enabled_) {
+      return;
+    }
+    const int interval_ms = std::max(100, reconnect_interval_ms_);
+    reconnect_timer_ = create_wall_timer(
+        std::chrono::milliseconds(interval_ms),
+        [this]() {
+          if (!serial_connected_.load()) {
+            initializeSerial(false);
+          }
+        });
+    RCLCPP_INFO(get_logger(), "串口自动重连: 开启，间隔=%d ms", interval_ms);
+  }
+
+  void handleSerialError(const std::error_code &ec) {
+    if (ec == asio::error::operation_aborted) {
+      return;
+    }
+    const bool was_connected = serial_connected_.exchange(false);
+    {
+      std::lock_guard<std::mutex> lock(serial_mutex_);
+      if (serial_connector_) {
+        serial_connector_->clearPendingWrites();
+        serial_connector_.reset();
+      }
+    }
+    if (was_connected) {
+      RCLCPP_WARN(get_logger(),
+                  "串口连接断开: %s (%s)。已清空未发送队列，等待设备恢复后自动重连。",
+                  serial_port_.c_str(), ec.message().c_str());
     }
   }
 
@@ -195,10 +261,8 @@ private:
     createUplinkEventPublisher(uplink_event_topic_);
     createUplinkEventPublisher(uplink_event_r2_topic_);
     path_request_pub_ = create_publisher<std_msgs::msg::Empty>(path_request_topic_, 10);
-    vision_weapon_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
-        vision_weapon_state_topic_, 10);
-    vision_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
-        vision_pole_state_topic_, 10);
+    vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
+        vision_weapon_pole_state_topic_, 10);
 
     // 原始包入口：推荐 /r2_serial/downlink/packet，同时兼容旧 /r2/downlink/packet。
     createRawPacketSubscription(raw_packet_topic_);
@@ -305,14 +369,19 @@ private:
 
 
   void startAsyncReceive() {
-    if (!serial_connector_) {
-      return;
+    std::shared_ptr<SerialConnector> connector;
+    {
+      std::lock_guard<std::mutex> lock(serial_mutex_);
+      if (!serial_connector_ || !serial_connected_.load()) {
+        return;
+      }
+      connector = serial_connector_;
     }
-    serial_connector_->asyncReceive([this](std::error_code ec, packet_t packet) {
+    connector->asyncReceive([this](std::error_code ec, packet_t packet) {
       if (!ec) {
         publishUplinkPacket(packet);
       }
-      if (serial_connector_) {
+      if (serial_connected_.load()) {
         startAsyncReceive();
       }
     });
@@ -353,16 +422,6 @@ private:
                   const std::vector<std::uint8_t> &payload,
                   bool clear_pending) {
     // 这里才真正封成 AA 55 ... 55 AA 的 CRC16 数据包并写入串口。
-    if (!serial_connector_) {
-      tx_failure_count_.fetch_add(1);
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Serial is not ready; drop code=0x%04x", code);
-      return false;
-    }
-    if (clear_pending) {
-      serial_connector_->clearPendingWrites();
-    }
-
     auto packet = std::make_shared<packet_t>(code, payload.begin(), payload.end(), gdut::build_packet);
     if (!*packet) {
       tx_failure_count_.fetch_add(1);
@@ -384,7 +443,21 @@ private:
           static_cast<unsigned long long>(hidden));
     }
 
-    serial_connector_->asyncSend(
+    std::shared_ptr<SerialConnector> connector;
+    {
+      std::lock_guard<std::mutex> lock(serial_mutex_);
+      if (!serial_connector_ || !serial_connected_.load()) {
+        tx_failure_count_.fetch_add(1);
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                             "Serial is not ready; drop code=0x%04x", code);
+        return false;
+      }
+      connector = serial_connector_;
+    }
+    if (clear_pending) {
+      connector->clearPendingWrites();
+    }
+    connector->asyncSend(
         *packet, [this, code, packet, log_tx_detail](std::error_code ec,
                                                      std::size_t bytes_transferred) {
           if (!ec && bytes_transferred == static_cast<std::size_t>(packet->size())) {
@@ -424,8 +497,10 @@ private:
     publishPathRequest(packet);
 
     if (serial_debug_raw_) {
-      RCLCPP_INFO(get_logger(), "收到有效串口包: code=0x%04x payload=%u",
-                  packet.code(), packet.body_size());
+      const auto payload_hex = bytesToHex(packet.body_data(), packet.body_size());
+      RCLCPP_INFO(get_logger(), "收到有效串口包: code=0x%04x payload=[%s] len=%u bytes",
+                  packet.code(), payload_hex.empty() ? "<empty>" : payload_hex.c_str(),
+                  packet.body_size());
     }
   }
 
@@ -445,47 +520,57 @@ private:
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
-    // 0x0003/0x0004 来自 STM32，转换成视觉节点已经在订阅的 UInt8 状态话题。
-    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr publisher;
+    // 0x0002/0x0003/0x0004 都按新版视觉统一状态控制处理，统一转发到 /vision/weapon_pole_cmd_state_2。
     const char *name = nullptr;
-    if (packet.code() == protocol::kVisionWeaponState) {
-      publisher = vision_weapon_state_pub_;
-      name = "武器检测状态";
-    } else if (packet.code() == protocol::kVisionPoleState) {
-      publisher = vision_pole_state_pub_;
-      name = "杆子检测状态";
+    if (packet.code() == protocol::kVisionStateLegacy) {
+      name = "视觉统一状态(0x0002)";
+    } else if (packet.code() == protocol::kVisionState) {
+      name = "视觉统一状态(0x0003)";
+    } else if (packet.code() == protocol::kVisionStateCompat) {
+      name = "视觉统一状态(0x0004)";
     } else {
       return;
     }
 
-    const auto state = protocol::readInt16Le(packet.body_data(), packet.body_size());
+    std::optional<int> state;
+    if (packet.body_size() == sizeof(std::uint8_t)) {
+      state = static_cast<int>(*packet.body_data());
+    } else if (const auto state16 = protocol::readInt16Le(packet.body_data(), packet.body_size())) {
+      state = static_cast<int>(*state16);
+    }
+
     if (!state) {
+      const auto payload_hex = bytesToHex(packet.body_data(), packet.body_size());
       RCLCPP_WARN(get_logger(),
-                  "忽略格式错误的%s包: code=0x%04x payload=%u bytes，应为 int16_t",
-                  name, packet.code(), packet.body_size());
+                  "忽略格式错误的%s包: code=0x%04x payload=[%s] len=%u bytes，应为 uint8 或 int16_t",
+                  name, packet.code(), payload_hex.empty() ? "<empty>" : payload_hex.c_str(),
+                  packet.body_size());
       return;
     }
     if (*state < 0 || *state > std::numeric_limits<std::uint8_t>::max()) {
       RCLCPP_WARN(get_logger(), "忽略超出 UInt8 范围的%s: code=0x%04x state=%d",
-                  name, packet.code(), static_cast<int>(*state));
+                  name, packet.code(), *state);
       return;
     }
-    if (*state > 2) {
-      RCLCPP_WARN(get_logger(), "%s state=%d 超出当前视觉约定 0/1/2，仍转发给视觉节点处理",
-                  name, static_cast<int>(*state));
+    if (*state > 4) {
+      RCLCPP_WARN(get_logger(), "%s state=%d 超出当前视觉约定 0/1/2/3/4，仍转发给视觉节点处理",
+                  name, *state);
     }
 
     std_msgs::msg::UInt8 msg;
     msg.data = static_cast<std::uint8_t>(*state);
-    publisher->publish(msg);
-    RCLCPP_INFO(get_logger(), "转发%s: code=0x%04x state=%d", name, packet.code(),
-                static_cast<int>(*state));
+    vision_weapon_pole_state_pub_->publish(msg);
+    RCLCPP_INFO(get_logger(), "转发%s: code=0x%04x state=%d -> %s", name, packet.code(),
+                *state, vision_weapon_pole_state_topic_.c_str());
   }
 
   asio::io_context io_context_;
   asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
-  std::unique_ptr<SerialConnector> serial_connector_;
+  std::shared_ptr<SerialConnector> serial_connector_;
   std::thread io_context_thread_;
+  std::mutex serial_mutex_;
+  std::atomic<bool> serial_connected_{false};
+  rclcpp::TimerBase::SharedPtr reconnect_timer_;
 
   std::string serial_port_;
   bool serial_debug_raw_{false};
@@ -493,6 +578,8 @@ private:
   int write_min_interval_ms_{10};
   bool debug_print_pose_tx_{false};
   int debug_pose_tx_summary_ms_{5000};
+  bool reconnect_enabled_{true};
+  int reconnect_interval_ms_{1000};
 
   std::string raw_packet_topic_;
   std::string raw_packet_r2_topic_;
@@ -523,8 +610,7 @@ private:
   std::string uplink_event_topic_;
   std::string uplink_event_r2_topic_;
   std::string path_request_topic_;
-  std::string vision_weapon_state_topic_;
-  std::string vision_pole_state_topic_;
+  std::string vision_weapon_pole_state_topic_;
 
   std::atomic<std::uint64_t> tx_success_count_{0};
   std::atomic<std::uint64_t> tx_failure_count_{0};
@@ -557,8 +643,7 @@ private:
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
   std::vector<rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr> uplink_event_pubs_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_request_pub_;
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_weapon_state_pub_;
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_pole_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_weapon_pole_state_pub_;
 };
 
 int main(int argc, char **argv) {

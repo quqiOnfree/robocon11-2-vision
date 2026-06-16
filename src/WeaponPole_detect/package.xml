@@ -11,9 +11,8 @@
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
-  <depend>fast_lio</depend>
-  <depend>libopencv-dev</depend>
   <depend>r2_serial</depend>
+  <depend>libopencv-dev</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
