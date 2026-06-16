@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstring>
+#include <deque>
 #include <functional>
 #include <iterator>
 #include <memory>
@@ -54,6 +55,10 @@ public:
   void setRawReceiveHandler(
       std::function<void(const std::uint8_t *, std::size_t)> handler) {
     state_->setRawReceiveHandler(std::move(handler));
+  }
+
+  void setErrorHandler(std::function<void(std::error_code)> handler) {
+    state_->setErrorHandler(std::move(handler));
   }
 
   ~SerialConnector() noexcept {
@@ -139,7 +144,7 @@ private:
                       self->read_buffer.data() + bytes_read);
                   self->startAsyncRead();
                 } else if (ec != asio::error::operation_aborted) {
-                  self->startAsyncRead();
+                  self->handleIoError(ec);
                 }
               }));
     }
@@ -150,8 +155,8 @@ private:
       asio::post(strand,
                  [self, bytes = std::move(bytes),
                   handler = std::forward<Handler>(handler)]() mutable {
-                   const bool idle = self->pending_writes.empty();
-                   self->pending_writes.push(
+                   const bool idle = !self->write_in_progress && self->pending_writes.empty();
+                   self->pending_writes.push_back(
                        PendingWrite{std::move(bytes), std::move(handler)});
                    if (idle) {
                      self->startNextWrite();
@@ -162,10 +167,9 @@ private:
     void clearPendingWrites() {
       auto self = shared_from_this();
       asio::post(strand, [self]() {
-        self->write_timer.cancel();
-        while (!self->pending_writes.empty()) {
-          self->pending_writes.pop();
-        }
+        std::error_code ignored;
+        self->write_timer.cancel(ignored);
+        self->dropPendingWrites(true);
       });
     }
 
@@ -178,7 +182,7 @@ private:
     }
 
     void startNextWrite() {
-      if (!is_running.load() || pending_writes.empty()) {
+      if (!is_running.load() || write_in_progress || pending_writes.empty()) {
         return;
       }
 
@@ -202,17 +206,26 @@ private:
       last_write_time = std::chrono::steady_clock::now();
       have_last_write_time = true;
 
+      write_in_progress = true;
+
       auto self = shared_from_this();
       asio::async_write(
           serial_port, asio::buffer(pending_writes.front().bytes),
           asio::bind_executor(
               strand, [self](std::error_code ec, std::size_t bytes_written) {
+                self->write_in_progress = false;
+                if (self->pending_writes.empty()) {
+                  return;
+                }
                 auto handler =
                     std::move(self->pending_writes.front().handler);
-                self->pending_writes.pop();
+                self->pending_writes.pop_front();
                 handler(ec, bytes_written);
                 if (!ec) {
                   self->startNextWrite();
+                } else if (ec != asio::error::operation_aborted) {
+                  self->failPendingWrites(ec);
+                  self->handleIoError(ec);
                 }
               }));
     }
@@ -249,6 +262,45 @@ private:
       });
     }
 
+    void setErrorHandler(std::function<void(std::error_code)> handler) {
+      auto self = shared_from_this();
+      asio::post(strand, [self, handler = std::move(handler)]() mutable {
+        self->error_handler = std::move(handler);
+      });
+    }
+
+    void dropPendingWrites(bool keep_active_write = false) {
+      if (keep_active_write && write_in_progress && !pending_writes.empty()) {
+        auto active = std::move(pending_writes.front());
+        pending_writes.clear();
+        pending_writes.push_back(std::move(active));
+        return;
+      }
+      pending_writes.clear();
+    }
+
+    void failPendingWrites(const std::error_code &ec) {
+      while (!pending_writes.empty()) {
+        auto handler = std::move(pending_writes.front().handler);
+        pending_writes.pop_front();
+        handler(ec, 0);
+      }
+    }
+
+    void handleIoError(const std::error_code &ec) {
+      if (!is_running.exchange(false)) {
+        return;
+      }
+      std::error_code ignored;
+      write_timer.cancel(ignored);
+      serial_port.cancel(ignored);
+      serial_port.close(ignored);
+      dropPendingWrites();
+      if (error_handler) {
+        error_handler(ec);
+      }
+    }
+
     void dispatchPacket(packet_t packet) {
       std::unique_ptr<HandlerWrapperBase> handler;
       {
@@ -268,7 +320,7 @@ private:
         return;
       }
       std::error_code ignored;
-      write_timer.cancel();
+      write_timer.cancel(ignored);
       serial_port.cancel(ignored);
       serial_port.close(ignored);
     }
@@ -280,13 +332,15 @@ private:
     std::chrono::milliseconds min_write_interval{std::chrono::milliseconds(10)};
     std::chrono::steady_clock::time_point last_write_time{};
     bool have_last_write_time{false};
+    bool write_in_progress{false};
     std::array<std::uint8_t, 1024> read_buffer{};
     std::atomic<bool> is_running{true};
     std::mutex mutex;
     std::queue<std::unique_ptr<HandlerWrapperBase>> request_handlers;
     std::queue<packet_t> received_packets;
-    std::queue<PendingWrite> pending_writes;
+    std::deque<PendingWrite> pending_writes;
     std::function<void(const std::uint8_t *, std::size_t)> raw_receive_handler;
+    std::function<void(std::error_code)> error_handler;
   };
 
   std::shared_ptr<State> state_;

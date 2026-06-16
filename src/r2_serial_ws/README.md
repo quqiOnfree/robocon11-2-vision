@@ -9,6 +9,27 @@
 3.下位机回传的数据也统一由 `r2_data_downlink` 解析后转发成 ROS2 话题（别管名字了能用就行）
 
 
+
+## 串口断线自动重连
+
+默认开启自动重连。下位机断电、重新烧录或 USB 串口短暂消失后，节点会清空旧连接中尚未写出的下发队列，并按固定间隔重新打开 `serial_port`。断线期间收到的 ROS 下发包会被丢弃，不会缓存到重连后再发送，避免小车恢复后执行过期命令。
+
+默认重连间隔为 `1000 ms`：
+
+```bash
+ros2 launch r2_serial r2_data_downlink.launch.py \
+  serial_port:=/dev/ttyACM0 \
+  reconnect_interval_ms:=1000
+```
+
+临时关闭自动重连：
+
+```bash
+ros2 launch r2_serial r2_data_downlink.launch.py \
+  serial_port:=/dev/ttyACM0 \
+  reconnect_enabled:=false
+```
+
 ## 串口下发限速
 
 默认开启串口写入限速，任意两个实际写入串口的数据包之间至少间隔 `10 ms`。这个限速在 `r2_data_downlink` 的统一写队列里完成，所以雷达、视觉、路径规划和手动 raw packet 都会一起受保护。
@@ -131,8 +152,7 @@ ament_target_dependencies(your_node rclcpp std_msgs r2_serial)
 特殊业务也会额外转发：
 
 ```text
-0x0003 -> /vision/weapon_cmd_state_2      std_msgs/msg/UInt8
-0x0004 -> /vision/pole_cmd_state_2        std_msgs/msg/UInt8
+0x0002/0x0003/0x0004 -> /vision/weapon_pole_cmd_state_2  std_msgs/msg/UInt8
 0x0301 -> /r2_serial/uplink/path_request_next  std_msgs/msg/Empty
 ```
 

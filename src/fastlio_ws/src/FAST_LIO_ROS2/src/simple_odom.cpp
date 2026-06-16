@@ -93,10 +93,7 @@ public:
         odom_topic_, 10,
         std::bind(&SimpleOdomSender::odomCallback, this, std::placeholders::_1));
     gripper_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
-        "/vision/weapon_cmd_state", 10);
-
-    pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
-        "/vision/pole_cmd_state", 10);
+        "/vision/weapon_pole_cmd_state", 10);
 
     keyboard_thread_ = std::thread(&SimpleOdomSender::keyboardLoop, this);
     keyboard_thread_.detach();
@@ -615,10 +612,7 @@ private:
     msg.data = state;
 
     gripper_state_pub_->publish(msg);
-    if (pole_state_pub_) {
-      pole_state_pub_->publish(msg);
-    }
-    
+
     current_gripper_state_ = state;
   }
 
@@ -641,7 +635,6 @@ private:
   rclcpp::Subscription<r2_serial::msg::SerialPacket>::SharedPtr uplink_packet_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr gripper_state_pub_;
-  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr pole_state_pub_;
 
   std::atomic<MissionState> current_state_;
   std::atomic<std::int16_t> current_x_{0};

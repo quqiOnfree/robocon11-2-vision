@@ -5,6 +5,7 @@
 #include <r2_serial/msg/serial_packet.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_msgs/msg/int16.hpp>
+#include <cameras.hpp>
 
 #include <chrono>
 #include <cmath>
