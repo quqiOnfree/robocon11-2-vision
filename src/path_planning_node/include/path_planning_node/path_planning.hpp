@@ -247,7 +247,7 @@ protected:
       path.pop();
       const a_star_node current_node = current_path.back();
       if (current_node.p.x == end.x && current_node.p.y == end.y) {
-        return current_path;
+        return a_star_queue_t{current_path, &pool_resource}; // Found path to the end
       }
 
       for (int i = 0; i < 4; ++i) {
