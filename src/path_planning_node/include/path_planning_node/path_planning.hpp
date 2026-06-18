@@ -146,18 +146,19 @@ protected:
     point start{1, 0};
     point end1{0, 5};
     point end2{2, 5};
+    std::pmr::monotonic_buffer_resource local_pool_resource{256, &pool_resource};
 
     auto path1 = a_star(map, start, end1);
     auto path2 = a_star(map, start, end2);
-    a_star_queue_t a_star_result{&pool_resource};
+    a_star_queue_t a_star_result{&local_pool_resource};
     std::queue<path_node> result;
-    if (path1.empty() && path2.empty()) {
+    if (path1.empty() && path2.empty()) [[unlikely]] {
       return result; // No path found
     } else if (path1.empty()) {
       a_star_result = std::move(path2);
     } else if (path2.empty()) {
       a_star_result = std::move(path1);
-    } else {
+    } else [[likely]] {
       if (path1.back().f_cost() <= path2.back().f_cost()) {
         a_star_result = std::move(path1);
       } else {
@@ -218,9 +219,10 @@ protected:
   a_star_queue_t
   a_star(const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
          const point &start, const point &end) const {
+    std::pmr::monotonic_buffer_resource local_pool_resource{8192, &pool_resource};
     std::priority_queue<a_star_queue_t, std::pmr::vector<a_star_queue_t>,
                         compare_a_star_node>
-        path{compare_a_star_node{}, &pool_resource};
+        path{compare_a_star_node{}, &local_pool_resource};
 
     auto get_kfs_type = [&m_map](const point &p) -> kfs_type {
       if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 || p.y >= static_cast<int>(map_height)) {
@@ -231,7 +233,7 @@ protected:
 
     {
       // 初始化路径
-      a_star_queue_t initial_path{&pool_resource};
+      a_star_queue_t initial_path{&local_pool_resource};
       a_star_node start_node{start, get_kfs_type(start), 0,
                              get_manhattan_distance(start, end)};
       start_node.walked[start.x][start.y] = true;
@@ -245,16 +247,18 @@ protected:
       path.pop();
       const a_star_node current_node = current_path.back();
       if (current_node.p.x == end.x && current_node.p.y == end.y) {
-        return current_path;
+        return a_star_queue_t{current_path, &pool_resource}; // Found path to the end
       }
 
       for (int i = 0; i < 4; ++i) {
         auto generate_next_path = [&](point next_point) {
-          if (current_node.walked[next_point.x][next_point.y])
+          if (current_node.walked[next_point.x][next_point.y]) [[unlikely]] {
             return; // Already walked
+          }
           const kfs_type next_type = get_kfs_type(next_point);
-          if (next_type == kfs_type::falsekfs)
+          if (next_type == kfs_type::falsekfs) [[unlikely]] {
             return; // Obstacle
+          }
           a_star_node next_node{next_point,
                                 next_type,
                                 current_node.g_cost + 1 +
@@ -312,7 +316,7 @@ protected:
             ++next_node.g_cost;
           }
           next_node.walked[next_point.x][next_point.y] = true;
-          a_star_queue_t new_path{&pool_resource};
+          a_star_queue_t new_path{&local_pool_resource};
           new_path = current_path;
           new_path.push(next_node);
           path.push(std::move(new_path));
@@ -388,12 +392,14 @@ protected:
       }
     };
 
+    std::pmr::monotonic_buffer_resource local_pool_resource{1024, &pool_resource};
+
     std::queue<point_with_direction,
                std::deque<point_with_direction, std::pmr::polymorphic_allocator<
                                                     point_with_direction>>>
-        directions{&pool_resource};
+        directions{&local_pool_resource};
     std::set<point, point_compare, std::pmr::polymorphic_allocator<point>>
-        must_be_walked_points{&pool_resource};
+        must_be_walked_points{&local_pool_resource};
     std::size_t r2kfs_must_be_grabed = 0;
     auto local_map = m_map;
 
@@ -742,11 +748,11 @@ protected:
         }
       }
     }
-
     return commands;
   }
 
 private:
   // std::array<std::array<kfs_type, map_height>, map_width> m_map{};
-  inline static std::pmr::synchronized_pool_resource pool_resource{};
+  inline static std::pmr::synchronized_pool_resource pool_resource{
+    std::pmr::pool_options{16384, 0}, std::pmr::get_default_resource()};
 };

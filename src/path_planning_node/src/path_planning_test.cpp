@@ -101,6 +101,7 @@ int main() {
           empty_map[i][j] = path_planning::kfs_type::empty;
         }
       }
+      return;
     }
     if (idx >= static_cast<int>(types.size())) {
       if (test_maps.find(empty_map) == test_maps.end()) {
@@ -122,6 +123,7 @@ int main() {
         empty_map[i][j] = path_planning::kfs_type::empty;
       }
     }
+    return;
   };
   setup_map = func;
 
