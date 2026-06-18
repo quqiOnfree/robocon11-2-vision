@@ -167,8 +167,7 @@ private:
     void clearPendingWrites() {
       auto self = shared_from_this();
       asio::post(strand, [self]() {
-        std::error_code ignored;
-        self->write_timer.cancel(ignored);
+        self->write_timer.cancel();
         self->dropPendingWrites(true);
       });
     }
@@ -292,7 +291,7 @@ private:
         return;
       }
       std::error_code ignored;
-      write_timer.cancel(ignored);
+      write_timer.cancel();
       serial_port.cancel(ignored);
       serial_port.close(ignored);
       dropPendingWrites();
@@ -320,7 +319,7 @@ private:
         return;
       }
       std::error_code ignored;
-      write_timer.cancel(ignored);
+      write_timer.cancel();
       serial_port.cancel(ignored);
       serial_port.close(ignored);
     }
