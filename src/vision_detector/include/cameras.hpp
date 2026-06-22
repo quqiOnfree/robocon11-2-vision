@@ -64,6 +64,12 @@ public:
     return frame;
   }
 
+  void release() {
+    std::lock_guard<std::mutex> lock(mtx_);
+    cap_.release();
+    cur_idx_ = CameraIndex::null;
+  }
+
 protected:
   Cameras() = default;
 

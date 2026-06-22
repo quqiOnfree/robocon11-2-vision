@@ -38,7 +38,6 @@ public:
     this->declare_parameter("pole_model_path", "model/pole_detect.onnx");
     this->declare_parameter("weapon_camera_index", 0);
     this->declare_parameter("pole_camera_index", 2);
-    this->declare_parameter("block_camera_index", 3);
     this->declare_parameter("conf_thres", 0.25);
     this->declare_parameter("show_window", true);
 
@@ -67,14 +66,12 @@ public:
     std::string pole_model_path;
     int weapon_camera_index;
     int pole_camera_index;
-    int block_camera_index;
     bool show_window;
 
     this->get_parameter("weapon_model_path", weapon_model_path);
     this->get_parameter("pole_model_path", pole_model_path);
     this->get_parameter("weapon_camera_index", weapon_camera_index);
     this->get_parameter("pole_camera_index", pole_camera_index);
-    this->get_parameter("block_camera_index", block_camera_index);
     this->get_parameter("conf_thres", conf_thres_);
     this->get_parameter("show_window", show_window);
 
@@ -82,8 +79,6 @@ public:
                                      weapon_camera_index);
     Cameras::getInstance().set_index(Cameras::CameraIndex::pole,
                                      pole_camera_index);
-    Cameras::getInstance().set_index(Cameras::CameraIndex::block,
-                                     block_camera_index);
 
     if (!std::filesystem::exists(weapon_model_path)) {
       RCLCPP_ERROR(this->get_logger(), "武器模型文件不存在: %s",
