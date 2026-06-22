@@ -8,8 +8,19 @@ r2_localizer:
       initial_pose: "/initialpose"
     frames:
       map: "map"
+      field: "field"
       odom: "camera_init"
       body: "body"
+      # 由 2026-06-16 实测数据拟合：预制 map 绕 Y 轴相对水平 field 倾斜约 28.798°。
+      # 这里填写 field -> map = Ry(-28.798°)，r2_localizer 对外发布时会用其逆矩阵 map -> field 水平化。
+      field_to_map: [
+        0.876322894071, 0.0, -0.481724179721, 0.0,
+        0.0, 1.0, 0.0, 0.0,
+        0.481724179721, 0.0, 0.876322894071, 0.0,
+        0.0, 0.0, 0.0, 1.0
+      ]
+    outputs:
+      use_field_frame: true
     initial_pose:
       x: 0.0
       y: 0.0

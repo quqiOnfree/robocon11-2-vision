@@ -141,6 +141,7 @@ add_executable(r2_localizer
   src/MapManager.cpp
   src/OdomSynchronizer.cpp
   src/NDTAligner.cpp
+  src/FieldMapTransform.cpp
 )
 target_include_directories(r2_localizer PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR}/include

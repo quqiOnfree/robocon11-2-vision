@@ -26,6 +26,7 @@
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2_ros/transform_broadcaster.h>
 
+#include "FieldMapTransform.hpp"
 #include "MapManager.hpp"
 #include "NDTAligner.hpp"
 #include "OdomSynchronizer.hpp"
@@ -119,8 +120,12 @@ private:
     declare_parameter<std::string>("topics.odom", "/Odometry");
     declare_parameter<std::string>("topics.initial_pose", "/initialpose");
     declare_parameter<std::string>("frames.map", "map");
+    declare_parameter<std::string>("frames.field", "field");
     declare_parameter<std::string>("frames.odom", "camera_init");
     declare_parameter<std::string>("frames.body", "body");
+    declare_parameter<std::vector<double>>("frames.field_to_map",
+                                           std::vector<double>{});
+    declare_parameter<bool>("outputs.use_field_frame", false);
     declare_parameter<double>("initial_pose.x", 0.0);
     declare_parameter<double>("initial_pose.y", 0.0);
     declare_parameter<double>("initial_pose.z", 0.0);
@@ -167,8 +172,13 @@ private:
     get_parameter("topics.odom", odom_topic_);
     get_parameter("topics.initial_pose", initial_pose_topic_);
     get_parameter("frames.map", map_frame_);
+    get_parameter("frames.field", field_frame_);
     get_parameter("frames.odom", odom_frame_);
     get_parameter("frames.body", body_frame_);
+    std::vector<double> field_to_map_values;
+    get_parameter("frames.field_to_map", field_to_map_values);
+    field_map_transform_.setFieldToMap(field_to_map_values);
+    get_parameter("outputs.use_field_frame", use_field_frame_);
     get_parameter("initial_accumulation_frames", initial_accumulation_frames_);
     get_parameter("initial_max_attempts", initial_max_attempts_);
     get_parameter("initial_registration_interval_frames",
@@ -474,7 +484,7 @@ private:
     return have_correction_;
   }
 
-  // 发布 map 下的 body 位姿，同时只广播 map -> camera_init，避免伪造 base_link 外参。
+  // NDT 和 TF 校正仍在 map 中运行；对外可选择发布水平 field 坐标。
   void publishGlobalPose(const OdomSample &sample) {
     Matrix4f correction;
     {
@@ -485,11 +495,16 @@ private:
       correction = map_to_camera_init_;
     }
     const Matrix4f map_to_body = correction * sample.camera_init_to_body;
-    const auto pose = matrixToPose(map_to_body);
+    const Matrix4f output_to_body =
+        use_field_frame_ ? field_map_transform_.mapPoseToField(map_to_body)
+                         : map_to_body;
+    const std::string &output_frame =
+        use_field_frame_ ? field_frame_ : map_frame_;
+    const auto pose = matrixToPose(output_to_body);
 
     geometry_msgs::msg::PoseStamped pose_msg;
     pose_msg.header.stamp = sample.odom.header.stamp;
-    pose_msg.header.frame_id = map_frame_;
+    pose_msg.header.frame_id = output_frame;
     pose_msg.pose = pose;
     pose_pub_->publish(pose_msg);
 
@@ -502,8 +517,18 @@ private:
     odom_pub_->publish(global_odom);
     rememberPose(pose_msg);
 
+    if (use_field_frame_) {
+      geometry_msgs::msg::TransformStamped field_tf;
+      field_tf.header.stamp = pose_msg.header.stamp;
+      field_tf.header.frame_id = field_frame_;
+      field_tf.child_frame_id = map_frame_;
+      field_tf.transform = field_map_transform_.fieldToMapTransformMsg();
+      tf_broadcaster_->sendTransform(field_tf);
+    }
+
     geometry_msgs::msg::TransformStamped tf_msg;
-    tf_msg.header = pose_msg.header;
+    tf_msg.header.stamp = pose_msg.header.stamp;
+    tf_msg.header.frame_id = map_frame_;
     tf_msg.child_frame_id = odom_frame_;
     tf_msg.transform.translation.x = correction(0, 3);
     tf_msg.transform.translation.y = correction(1, 3);
@@ -598,10 +623,12 @@ private:
     const double yaw_deg = yaw_rad * 180.0 / M_PI;
 
     std::ostringstream message;
+    const std::string frame = samples.empty() ? map_frame_ : samples.front().header.frame_id;
     message << std::fixed << std::setprecision(3)
-            << "map averaged pose over " << samples.size() << " samples / "
-            << pose_report_window_sec_ << " s: x=" << x << " m, y=" << y
-            << " m, z=" << z << " m, yaw=" << yaw_deg << " deg";
+            << frame << " averaged pose over " << samples.size()
+            << " samples / " << pose_report_window_sec_ << " s: x=" << x
+            << " m, y=" << y << " m, z=" << z << " m, yaw=" << yaw_deg
+            << " deg";
     response->success = true;
     response->message = message.str();
     RCLCPP_INFO(get_logger(), "%s", response->message.c_str());
@@ -658,6 +685,7 @@ private:
   std::string odom_topic_;
   std::string initial_pose_topic_;
   std::string map_frame_;
+  std::string field_frame_;
   std::string odom_frame_;
   std::string body_frame_;
   int initial_accumulation_frames_{30};
@@ -691,6 +719,7 @@ private:
   double map_publish_period_sec_{2.0};
   double pose_report_window_sec_{3.0};
   int pose_report_min_samples_{5};
+  bool use_field_frame_{false};
 
   bool have_correction_{false};
   bool match_valid_{false};
@@ -704,6 +733,7 @@ private:
   mutable std::mutex pose_history_mutex_;
   std::deque<geometry_msgs::msg::PoseStamped> pose_history_;
   std::ofstream metrics_stream_;
+  r2_localizer::FieldMapTransform field_map_transform_;
 
   std::unique_ptr<r2_localizer::MapManager> map_manager_;
   std::unique_ptr<r2_localizer::OdomSynchronizer> odom_synchronizer_;
