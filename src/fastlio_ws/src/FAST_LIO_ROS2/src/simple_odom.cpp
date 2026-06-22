@@ -69,6 +69,8 @@ public:
         "uplink_packet_topic", "/r2_serial/uplink/packet");
     height_compensation_enabled_ = declare_parameter<bool>(
         "height_compensation.enabled", true);
+    height_compensation_auto_disable_for_global_ = declare_parameter<bool>(
+        "height_compensation.auto_disable_for_global_odometry", true);
     height_compensation_x_per_z_ = declare_parameter<double>(
         "height_compensation.x_per_z", -0.52);
     height_compensation_y_per_z_ = declare_parameter<double>(
@@ -77,10 +79,17 @@ public:
         "height_compensation.use_initial_z_as_reference", true);
     height_compensation_reference_z_ = declare_parameter<double>(
         "height_compensation.reference_z", 0.0);
+    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1372);
+    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.3420);
     const auto staged_values = declare_parameter<std::vector<double>>(
         "sequence.staged_up_targets", std::vector<double>{});
     const auto home_values = declare_parameter<std::vector<double>>(
         "sequence.home_target", std::vector<double>{0.0, 0.0, 0.0});
+
+    if (height_compensation_auto_disable_for_global_ && isGlobalOdomTopic(odom_topic_)) {
+      height_compensation_enabled_ = false;
+      height_compensation_disabled_for_global_ = true;
+    }
 
     configureSequenceTargets(staged_values, home_values);
 
@@ -107,7 +116,12 @@ public:
                   height_compensation_x_per_z_, height_compensation_y_per_z_,
                   height_compensation_use_initial_z_ ? "initial_z=" : "fixed_z=",
                   height_compensation_reference_z_);
+    } else if (height_compensation_disabled_for_global_) {
+      RCLCPP_INFO(get_logger(),
+                  "订阅全局定位 %s，已自动关闭升降高度补偿，避免 field 坐标被二次修正。",
+                  odom_topic_.c_str());
     }
+    RCLCPP_INFO(get_logger(), "车体中心外参: x=%.4f m y=%.4f m", base_offset_x_, base_offset_y_);
 
     std::printf("\n======================================================\n");
     std::printf("|==================== 系统启动成功 ==================|\n");
@@ -556,10 +570,12 @@ private:
     current_state_ = IDLE;
   }
 
-  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    constexpr double kOffsetX = 0.0834;
-    constexpr double kOffsetY = 0.2661;
+  static bool isGlobalOdomTopic(const std::string &topic) {
+    return topic.find("global_odometry") != std::string::npos ||
+           topic.find("r2/global") != std::string::npos;
+  }
 
+  void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     const double lidar_z = msg->pose.pose.position.z;
     double lidar_x = msg->pose.pose.position.x;
     double lidar_y = msg->pose.pose.position.y;
@@ -585,8 +601,8 @@ private:
     double roll, pitch, yaw;
     m.getRPY(roll, pitch, yaw);
 
-    const double base_x = lidar_x - (kOffsetX * std::cos(yaw) - kOffsetY * std::sin(yaw));
-    const double base_y = lidar_y - (kOffsetX * std::sin(yaw) + kOffsetY * std::cos(yaw));
+    const double base_x = lidar_x - (base_offset_x_ * std::cos(yaw) - base_offset_y_ * std::sin(yaw));
+    const double base_y = lidar_y - (base_offset_x_ * std::sin(yaw) + base_offset_y_ * std::cos(yaw));
     const auto mm_x = checkedInt16(std::lround(base_x * 1000.0), "位置 X");
     const auto mm_y = checkedInt16(std::lround(base_y * 1000.0), "位置 Y");
     const auto yaw_deg = checkedInt16(std::lround(yaw * 180.0 / M_PI), "位置 Yaw");
@@ -621,10 +637,14 @@ private:
   std::string downlink_packet_topic_;
   std::string uplink_packet_topic_;
   bool height_compensation_enabled_{true};
+  bool height_compensation_auto_disable_for_global_{true};
+  bool height_compensation_disabled_for_global_{false};
   bool height_compensation_use_initial_z_{true};
   double height_compensation_x_per_z_{-0.52};
   double height_compensation_y_per_z_{0.0};
   double height_compensation_reference_z_{0.0};
+  double base_offset_x_{0.1372};
+  double base_offset_y_{0.3420};
   std::atomic<bool> height_reference_initialized_{false};
 
   std::array<TargetPose, 3> staged_up_targets_{};

@@ -49,7 +49,7 @@ bool clear_pending
 | 消息码 | 方向 | 含义 | 负载 |
 | --- | --- | --- | --- |
 | `0x0001` | 上位机 -> 下位机 | 视觉夹爪/长杆跟随输出 | `int16_t` |
-| `0x0002` | 上位机 -> 下位机 | 视觉跟随输出兼容码 | `int16_t` |
+| `0x0002` | 下位机 -> 上位机 | 改变视觉检测状态兼容码 | `int16_t`，转发到 `/vision/weapon_pole_cmd_state_2` |
 | `0x0003` | 下位机 -> 上位机 | 改变视觉检测状态 | `int16_t`，转发到 `/vision/weapon_pole_cmd_state_2` |
 | `0x0004` | 下位机 -> 上位机 | 改变视觉检测状态兼容码 | `int16_t`，转发到 `/vision/weapon_pole_cmd_state_2` |
 | `0x0101` | 上位机 -> 下位机 | 上报当前位置 | `int16_t x_mm, y_mm, yaw_deg` |

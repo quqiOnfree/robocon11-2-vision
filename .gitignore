@@ -4,3 +4,5 @@ install/
 log/
 .cache/
 __pycache__/
+*.txt
+
