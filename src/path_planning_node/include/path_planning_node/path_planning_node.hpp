@@ -99,7 +99,7 @@ public:
 
     // set up the command callback to handle commands from the sender_receiver_
     sender_receiver_.setCommandCallback([this]() {
-      path_planning::command cmd;
+      path_planning::command cmd{path_planning::command::complete_task};
       {
         std::lock_guard<std::mutex> lock(command_queue_mutex_);
         if (command_queue_.empty()) {
@@ -214,26 +214,6 @@ public:
 
   void send_command(path_planning::command cmd) {
     sender_receiver_.publish(cmd);
-  }
-
-protected:
-  void process_serial_data(std::uint16_t code, std::span<const std::uint8_t> data) {
-    RCLCPP_INFO(this->get_logger(), "Processing serial data - Code: %u, Data size: %zu bytes",
-                code, data.size());
-    switch (static_cast<path_planning::command>(code)) {
-    case path_planning::command::request_command: {
-        std::lock_guard<std::mutex> lock(command_queue_mutex_);
-        if (command_queue_.empty()) {
-          send_command(path_planning::command::complete_task);
-        } else {
-          send_command(command_queue_.front());
-          command_queue_.pop();
-        }
-      }
-      break;
-    default:
-      break;
-    }
   }
 
 private:
