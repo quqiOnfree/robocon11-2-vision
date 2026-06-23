@@ -2,6 +2,7 @@ from PySide6.QtCore import Qt, Signal, Slot, QObject, QTimer
 from PySide6.QtWidgets import (
     QMainWindow,
     QVBoxLayout,
+    QGridLayout,
     QWidget,
     QPushButton,
     QGraphicsScene,
@@ -141,9 +142,9 @@ class MainWindow(QMainWindow):
         central_widget.setLayout(layout)
 
         self.graphics_scene = QGraphicsScene(self)
-        self.graphics_scene.setSceneRect(0, 0, 500, 600)
+        self.graphics_scene.setSceneRect(0, 0, 500, 400 + 20)
         self.graphics_view = QGraphicsView(self.graphics_scene, parent=self)
-        self.graphics_view.setMinimumSize(500, 600)
+        self.graphics_view.setMinimumSize(500, 400 + 20)
         layout.addWidget(self.graphics_view)
 
         self.create_side_panel()
@@ -155,7 +156,7 @@ class MainWindow(QMainWindow):
             row_items = []
             for c in range(len(grid[0])):
                 x = (r + 1) * 100
-                y = (c + 1) * 100
+                y = c * 100 + 10
                 item = BlockItem(x, y, 100, 100, grid[r][c])
                 self.graphics_scene.addItem(item)
                 row_items.append(item)
@@ -170,13 +171,13 @@ class MainWindow(QMainWindow):
         # 右侧 Dock 窗口
         dock = QDockWidget("方块类型", self)
         widget = QWidget()
-        layout = QVBoxLayout(widget)
+        layout = QGridLayout(widget)
 
         scene_combo = QComboBox()
         scene_combo.addItems(["蓝色场景", "红色场景"])
         scene_combo.currentIndexChanged.connect(self.change_scene)
         scene_combo.setFixedSize(100, 100)
-        layout.addWidget(scene_combo)
+        layout.addWidget(scene_combo, 0, 0)
 
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
@@ -188,6 +189,7 @@ class MainWindow(QMainWindow):
             ("FalseKFS", BlockType.False_KFS, QColor("darkred"), QColor("white")),
         ]
 
+        count = 0
         for name, type_id, color, text_color in types:
             btn = QPushButton(name)
             btn.setCheckable(True)
@@ -196,7 +198,8 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet(
                 f"background-color: {color.name()}; color: {text_color.name()};"
             )
-            layout.addWidget(btn)
+            layout.addWidget(btn, count // 2 + 1, count % 2)
+            count += 1
             self.type_buttons.addButton(btn)
 
         emit_btn = QPushButton("发布")
@@ -210,9 +213,9 @@ class MainWindow(QMainWindow):
         # 添加一个清除选中的按钮
         clear_btn = QPushButton("清除选中")
         clear_btn.clicked.connect(self.clear_selection)
+        clear_btn.setFixedSize(100, 100)
         layout.addWidget(clear_btn)
 
-        layout.addStretch()
         dock.setWidget(widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
 
@@ -233,7 +236,7 @@ class MainWindow(QMainWindow):
             print([item.name for item in row])
 
     def closeEvent(self, event):
-        self.print_grid()
+        # self.print_grid()
         super().closeEvent(event)
 
     @Slot(list)
