@@ -1,0 +1,48 @@
+fast_lio_sam_sc_qn:
+  ros__parameters:
+    topics:
+      odom: /Odometry
+      cloud: /cloud_registered
+      global_odom: /r2/global_odometry
+      current_pose: /r2_current_pose
+      corrected_path: /r2/sam/corrected_path
+      corrected_current_cloud: /r2/sam/corrected_current_cloud
+    frames:
+      map: map
+      child: body
+    sync:
+      queue_size: 30
+      max_stamp_diff_sec: 0.03
+      qos_reliability: reliable
+    keyframe:
+      distance_threshold: 1.5
+      min_points: 80
+    loop:
+      enable: true
+      enable_quatro: true
+      enable_submap_matching: true
+      num_submap_keyframes: 10
+      min_keyframes: 35
+      voxel_resolution: 0.10
+      scancontext_max_correspondence_distance: 35.0
+    nano_gicp:
+      thread_number: 0
+      correspondences_number: 15
+      max_iterations: 32
+      ransac_iterations: 5
+      max_correspondence_distance: 35.0
+      fitness_score_threshold: 1.5
+      transformation_epsilon: 0.01
+      euclidean_fitness_epsilon: 0.01
+      ransac_outlier_rejection_threshold: 1.0
+    quatro:
+      use_optimized_matching: true
+      estimate_scale: false
+      max_correspondences: 500
+      max_iterations: 50
+      distance_threshold: 35.0
+      fpfh_normal_radius: 0.30
+      fpfh_radius: 0.50
+      noise_bound: 0.10
+      rotation_gnc_factor: 1.40
+      rotation_cost_diff_threshold: 0.0001
