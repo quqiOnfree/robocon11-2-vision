@@ -55,7 +55,7 @@ def generate_launch_description():
     simple_odom = Node(
         package='fast_lio',
         executable='simple_odom',
-        name='simple_odom',
+        name='r2_pose_reporter',
         output='screen',
         emulate_tty=True,
         condition=IfCondition(run_simple_odom),

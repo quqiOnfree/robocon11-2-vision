@@ -10,9 +10,11 @@ def generate_launch_description():
     debug_print_pose_tx = LaunchConfiguration('debug_print_pose_tx')
     write_rate_limit_enabled = LaunchConfiguration('write_rate_limit_enabled')
     write_min_interval_ms = LaunchConfiguration('write_min_interval_ms')
+    debug_drop_summary_every_n = LaunchConfiguration('debug_drop_summary_every_n')
     reconnect_enabled = LaunchConfiguration('reconnect_enabled')
     reconnect_interval_ms = LaunchConfiguration('reconnect_interval_ms')
     debug_pose_tx_summary_ms = LaunchConfiguration('debug_pose_tx_summary_ms')
+    reconnect_log_every_n = LaunchConfiguration('reconnect_log_every_n')
     pose_odom_topic = LaunchConfiguration('pose_odom_topic')
     raw_packet_r2_topic = LaunchConfiguration('raw_packet_r2_topic')
     raw_packet_legacy_topic = LaunchConfiguration('raw_packet_legacy_topic')
@@ -26,9 +28,11 @@ def generate_launch_description():
         DeclareLaunchArgument('debug_print_pose_tx', default_value='false'),
         DeclareLaunchArgument('write_rate_limit_enabled', default_value='true'),
         DeclareLaunchArgument('write_min_interval_ms', default_value='10'),
+        DeclareLaunchArgument('debug_drop_summary_every_n', default_value='50'),
         DeclareLaunchArgument('reconnect_enabled', default_value='true'),
         DeclareLaunchArgument('reconnect_interval_ms', default_value='1000'),
-        DeclareLaunchArgument('debug_pose_tx_summary_ms', default_value='5000'),
+        DeclareLaunchArgument('debug_pose_tx_summary_ms', default_value='50000'),
+        DeclareLaunchArgument('reconnect_log_every_n', default_value='10'),
         DeclareLaunchArgument('pose_odom_topic', default_value=''),
         DeclareLaunchArgument('raw_packet_r2_topic', default_value='/r2/downlink/packet'),
         DeclareLaunchArgument('raw_packet_legacy_topic', default_value=''),
@@ -46,9 +50,11 @@ def generate_launch_description():
                 'debug.print_pose_tx': debug_print_pose_tx,
                 'write_rate_limit.enabled': write_rate_limit_enabled,
                 'write_rate_limit.min_interval_ms': write_min_interval_ms,
+                'debug.drop_summary_every_n': debug_drop_summary_every_n,
                 'reconnect.enabled': reconnect_enabled,
                 'reconnect.interval_ms': reconnect_interval_ms,
                 'debug.pose_tx_summary_ms': debug_pose_tx_summary_ms,
+                'reconnect.log_every_n': reconnect_log_every_n,
                 'topics.pose_odom': pose_odom_topic,
                 'topics.raw_packet_r2': raw_packet_r2_topic,
                 'topics.raw_packet_legacy': raw_packet_legacy_topic,
