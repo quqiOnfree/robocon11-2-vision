@@ -138,7 +138,7 @@ target_include_directories(simple_odom PRIVATE
 )
 target_compile_features(simple_odom PRIVATE cxx_std_20)
 target_link_libraries(simple_odom Threads::Threads)
-ament_target_dependencies(simple_odom rclcpp nav_msgs tf2 std_msgs r2_serial)
+ament_target_dependencies(simple_odom rclcpp nav_msgs tf2 std_msgs std_srvs r2_serial)
 install(TARGETS simple_odom DESTINATION lib/${PROJECT_NAME})
 
 

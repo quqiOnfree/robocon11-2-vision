@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
 
@@ -12,6 +13,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -27,6 +29,8 @@ public:
     odom_topic_ = declare_parameter<std::string>("odom_topic", "/Odometry");
     downlink_packet_topic_ = declare_parameter<std::string>(
         "downlink_packet_topic", "/r2_serial/downlink/packet");
+    status_service_name_ = declare_parameter<std::string>(
+        "status_service_name", "/r2_pose_reporter/report_status");
 
     // 兼容旧启动参数：simple_odom 现在不再直接打开串口，串口统一交给 r2_serial 节点。
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
@@ -62,12 +66,17 @@ public:
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 10,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
+    status_srv_ = create_service<std_srvs::srv::Trigger>(
+        status_service_name_,
+        std::bind(&R2PoseReporter::handleStatusService, this,
+                  std::placeholders::_1, std::placeholders::_2));
 
     keyboard_thread_ = std::thread(&R2PoseReporter::keyboardLoop, this);
     keyboard_thread_.detach();
 
     RCLCPP_INFO(get_logger(), "订阅里程计: %s", odom_topic_.c_str());
     RCLCPP_INFO(get_logger(), "位姿上报发布到: %s", downlink_packet_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "状态查询服务: %s", status_service_name_.c_str());
     RCLCPP_INFO(get_logger(), "车体中心外参: x=%.4f m y=%.4f m", base_offset_x_, base_offset_y_);
     if (height_compensation_enabled_) {
       RCLCPP_INFO(get_logger(),
@@ -81,11 +90,9 @@ public:
                   odom_topic_.c_str());
     }
 
-    std::printf("\n======================================================\n");
-    std::printf("|================ R2 位姿上报节点启动 ================|\n");
-    std::printf("| 持续发送 0x0101 位姿包到 r2_serial                  |\n");
-    std::printf("| 输入 q 查询当前位姿与 ROS 发布状态                  |\n");
-    std::printf("======================================================\n> ");
+    std::printf("|===================== R2 位姿上报节点启动 =====================|\n");
+    std::printf("ros2 service call /r2_pose_reporter/report_status std_srvs/srv/Trigger "{}"\n");
+    std::printf("================================================================\n> ");
   }
 
 private:
@@ -138,7 +145,7 @@ private:
     }
   }
 
-  void printStatus() {
+  std::string buildStatusText() const {
     const auto last_send = last_publish_time_ms_.load();
     const bool have_publish = last_send != 0;
     const std::uint64_t elapsed = have_publish ? nowMs() - last_send : 0;
@@ -146,33 +153,46 @@ private:
         downlink_packet_pub_ && downlink_packet_pub_->get_subscription_count() > 0;
     const bool recently_published = downlink_connected && have_publish && elapsed < 1000;
 
-    std::printf("\n================ [R2 位姿上报状态] ================\n");
-    std::printf("当前车体坐标 : X: %d mm | Y: %d mm | Z: %d mm | Yaw: %d deg\n",
-                current_x_.load(), current_y_.load(), current_z_.load(),
-                current_yaw_deg_.load());
+    std::ostringstream out;
+    out << "\n================ [R2 位姿上报状态] ================\n";
+    out << "当前车体坐标 : X: " << current_x_.load()
+        << " mm | Y: " << current_y_.load()
+        << " mm | Z: " << current_z_.load()
+        << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
     if (height_compensation_enabled_) {
-      std::printf("升降补偿状态 : ref_z=%d mm | dx=%d mm | dy=%d mm\n",
-                  height_compensation_reference_z_mm_.load(),
-                  height_compensation_dx_mm_.load(),
-                  height_compensation_dy_mm_.load());
+      out << "升降补偿状态 : ref_z=" << height_compensation_reference_z_mm_.load()
+          << " mm | dx=" << height_compensation_dx_mm_.load()
+          << " mm | dy=" << height_compensation_dy_mm_.load() << " mm\n";
     }
-    std::printf("里程计输入   : %s\n", odom_topic_.c_str());
-    std::printf("下发话题     : %s\n", downlink_packet_topic_.c_str());
-    std::printf("r2_serial连接: %s\n", downlink_connected ? "已发现订阅者" : "未发现订阅者");
+    out << "里程计输入   : " << odom_topic_ << "\n";
+    out << "下发话题     : " << downlink_packet_topic_ << "\n";
+    out << "r2_serial连接: " << (downlink_connected ? "已发现订阅者" : "未发现订阅者") << "\n";
     if (have_publish) {
-      std::printf("ROS发布状态  : %s (距上次发布 %llu ms)\n",
-                  recently_published ? "正常发布中" : "静默或无订阅者",
-                  static_cast<unsigned long long>(elapsed));
-      std::printf("最近发布包   : code=0x%04x payload=%zu bytes\n",
-                  last_publish_code_.load(), last_publish_bytes_.load());
+      out << "ROS发布状态  : " << (recently_published ? "正常发布中" : "静默或无订阅者")
+          << " (距上次发布 " << elapsed << " ms)\n";
+      out << "最近发布包   : code=0x" << std::hex << std::uppercase
+          << last_publish_code_.load() << std::dec
+          << " payload=" << last_publish_bytes_.load() << " bytes\n";
     } else {
-      std::printf("ROS发布状态  : 尚无成功发布记录\n");
+      out << "ROS发布状态  : 尚无成功发布记录\n";
     }
-    std::printf("发布统计     : 已发布=%llu 未发布=%llu\n",
-                static_cast<unsigned long long>(publish_success_count_.load()),
-                static_cast<unsigned long long>(publish_failure_count_.load()));
-    std::printf("说明         : 这里只表示已发布给 r2_serial；串口真实写入结果请看 r2_data_downlink。\n");
-    std::printf("==================================================\n> ");
+    out << "发布统计     : 已发布=" << publish_success_count_.load()
+        << " 未发布=" << publish_failure_count_.load() << "\n";
+    out << "说明         : 这里只表示已发布给 r2_serial；串口真实写入结果请看 r2_data_downlink。\n";
+    out << "==================================================";
+    return out.str();
+  }
+
+  void printStatus() {
+    const auto text = buildStatusText();
+    std::printf("%s\n> ", text.c_str());
+  }
+
+  void handleStatusService(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    response->success = true;
+    response->message = buildStatusText();
   }
 
   bool publishPosition(std::int16_t x_mm, std::int16_t y_mm, std::int16_t yaw_deg) {
@@ -247,6 +267,7 @@ private:
   std::thread keyboard_thread_;
   std::string odom_topic_;
   std::string downlink_packet_topic_;
+  std::string status_service_name_;
 
   bool height_compensation_enabled_{true};
   bool height_compensation_auto_disable_for_global_{true};
@@ -261,6 +282,7 @@ private:
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
 
   std::atomic<std::int16_t> current_x_{0};
   std::atomic<std::int16_t> current_y_{0};

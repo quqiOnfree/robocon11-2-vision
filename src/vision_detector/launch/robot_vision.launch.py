@@ -86,7 +86,7 @@ def generate_launch_description():
     # ==================== 节点 ====================
     weapon_pole_node = Node(
             package="vision_detector",
-            executable="weapon_pole_node",
+            executable="weapon_pole",
             name="weapon_pole_node",
             parameters=[{
                 "weapon_model_path": LaunchConfiguration("weapon_model"),
