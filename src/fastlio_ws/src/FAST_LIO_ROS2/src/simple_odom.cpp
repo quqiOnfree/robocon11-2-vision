@@ -91,8 +91,8 @@ public:
     }
 
     std::printf("|===================== R2 位姿上报节点启动 =====================|\n");
-    std::printf("ros2 service call /r2_pose_reporter/report_status std_srvs/srv/Trigger "{}"\n");
-    std::printf("================================================================\n> ");
+    // std::printf("ros2 service call /r2_pose_reporter/report_status std_srvs/srv/Trigger "{}"\n");
+    // std::printf("================================================================\n> ");
   }
 
 private:

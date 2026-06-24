@@ -1,0 +1,19 @@
+终端1：雷达驱动
+ros2 launch livox_ros_driver2 msg_MID360s_launch.py
+
+终端2：雷达节点
+ros2 launch fast_lio_sam_sc_qn_ros2 system_run.launch.py \
+  use_sim_time:=false \
+  rviz:=false \
+  run_simple_odom:=true \
+  simple_odom_topic:=/r2/global_odometry
+  
+终端3：串口收发
+ros2 launch r2_serial r2_data_downlink.launch.py \
+  serial_port:=/dev/ttyACM0 \
+  serial_debug_raw:=true
+  
+终端4：视觉节点
+ros2 launch vision_detector robot_vision.launch.py \
+  weapon_camera:=0 \
+  pole_camera:=2
