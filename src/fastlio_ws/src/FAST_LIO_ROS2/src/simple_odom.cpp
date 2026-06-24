@@ -49,8 +49,8 @@ public:
         "height_compensation.use_initial_z_as_reference", true);
     height_compensation_reference_z_ = declare_parameter<double>(
         "height_compensation.reference_z", 0.0);
-    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1372);
-    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.3420);
+    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
+    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
 
     if (height_compensation_auto_disable_for_global_ && isGlobalOdomTopic(odom_topic_)) {
       height_compensation_enabled_ = false;
@@ -255,8 +255,8 @@ private:
   double height_compensation_x_per_z_{-0.52};
   double height_compensation_y_per_z_{0.0};
   double height_compensation_reference_z_{0.0};
-  double base_offset_x_{0.1372};
-  double base_offset_y_{-0.3420};
+  double base_offset_x_{0.1352};
+  double base_offset_y_{-0.2335};
   std::atomic<bool> height_reference_initialized_{false};
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

@@ -136,21 +136,6 @@ ament_target_dependencies(map_saver rclcpp sensor_msgs pcl_conversions)
 target_link_libraries(map_saver ${PCL_LIBRARIES})
 install(TARGETS map_saver DESTINATION lib/${PROJECT_NAME})
 
-add_executable(r2_localizer
-  src/r2_localizer_node.cpp
-  src/MapManager.cpp
-  src/OdomSynchronizer.cpp
-  src/NDTAligner.cpp
-  src/FieldMapTransform.cpp
-)
-target_include_directories(r2_localizer PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${PCL_INCLUDE_DIRS}
-)
-ament_target_dependencies(r2_localizer rclcpp sensor_msgs geometry_msgs nav_msgs std_msgs std_srvs tf2_ros pcl_conversions)
-target_link_libraries(r2_localizer ${PCL_LIBRARIES} Eigen3::Eigen)
-install(TARGETS r2_localizer DESTINATION lib/${PROJECT_NAME})
-
 add_executable(r2_kfs_detector
   src/r2_kfs_detector.cpp
   src/MapManager.cpp

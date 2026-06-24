@@ -23,7 +23,7 @@ r2_kfs_detector:
       min_occupied_voxels: 6
 
     slots:
-      # 12 个候选格的底面中心点，单位 m，坐标系为 r2_localizer 的 map。
+      # 12 个候选格的底面中心点，单位 m，坐标系为当前预制 map。
       # 当前全是占位值；测完地图坐标后按 [x0,y0,z0, x1,y1,z1, ...] 填入。
       centers: [
         0.0, 0.0, 0.0,
