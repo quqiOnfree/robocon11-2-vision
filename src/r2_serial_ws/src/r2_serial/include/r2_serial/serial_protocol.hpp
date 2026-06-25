@@ -44,6 +44,7 @@ inline constexpr std::uint16_t kPathGrabMidKfs = 0x0318;
 inline constexpr std::uint16_t kPathGrabHighKfs = 0x0319;
 inline constexpr std::uint16_t kPathReplaceKfs = 0x031A;
 inline constexpr std::uint16_t kPathNoCommand = 0x031B;
+inline constexpr std::uint16_t kPathTurnAround180 = 0x031C;
 
 // STM32 payload 里的 int16_t 使用小端序；协议头、长度、code、CRC 仍是大端序。
 inline void appendInt16Le(std::vector<std::uint8_t> &payload,

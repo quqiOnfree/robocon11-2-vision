@@ -151,6 +151,8 @@ private:
         "topics.path.replace_kfs", "/r2_serial/downlink/path/replace_kfs");
     path_no_command_topic_ = declare_parameter<std::string>(
         "topics.path.no_command", "/r2_serial/downlink/path/no_command");
+    path_turn_around_180_topic_ = declare_parameter<std::string>(
+      "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
 
     uplink_packet_topic_ = declare_parameter<std::string>(
         "topics.uplink_packet", "/r2_serial/uplink/packet");
@@ -314,6 +316,8 @@ private:
         path_replace_kfs_topic_, protocol::kPathReplaceKfs, false);
     path_no_command_sub_ = createEmptyCommandSubscription(
         path_no_command_topic_, protocol::kPathNoCommand, false);
+    path_turn_around_180_sub_ = createEmptyCommandSubscription(
+        path_turn_right_90_topic_, protocol::kPathTurnAround180, false);
 
     if (!pose_odom_topic_.empty()) {
       pose_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -604,6 +608,7 @@ private:
   std::string path_grab_high_kfs_topic_;
   std::string path_replace_kfs_topic_;
   std::string path_no_command_topic_;
+  std::string path_turn_around_180_topic_;
 
   std::string uplink_packet_topic_;
   std::string uplink_packet_r2_topic_;
@@ -638,6 +643,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_grab_high_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
 
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
