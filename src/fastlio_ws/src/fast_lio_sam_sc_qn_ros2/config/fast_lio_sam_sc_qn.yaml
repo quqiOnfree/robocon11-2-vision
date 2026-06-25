@@ -10,6 +10,11 @@ fast_lio_sam_sc_qn:
     frames:
       map: map
       child: body
+    map_save:
+      # /r2/sam/save_map 会导出 poses.csv + keyframes/*.pcd 到该目录。
+      directory: /tmp/r2_sam_keyframe_map
+      # 0 表示保存原始局部关键帧点云；需要压缩地图体积时再设为 0.05/0.10。
+      voxel_leaf_size: 0.0
     sync:
       queue_size: 30
       max_stamp_diff_sec: 0.03

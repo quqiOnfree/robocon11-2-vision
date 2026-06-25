@@ -1,7 +1,11 @@
 #include <chrono>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -23,8 +27,10 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
+#include <pcl/io/pcd_io.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include "fast_lio_sam_sc_qn_ros2/loop_closure.hpp"
@@ -59,6 +65,8 @@ private:
     declare_parameter<std::string>("topics.corrected_current_cloud", "/r2/sam/corrected_current_cloud");
     declare_parameter<std::string>("frames.map", "map");
     declare_parameter<std::string>("frames.child", "body");
+    declare_parameter<std::string>("map_save.directory", "/tmp/r2_sam_keyframe_map");
+    declare_parameter<double>("map_save.voxel_leaf_size", 0.0);
     declare_parameter<int>("sync.queue_size", 30);
     declare_parameter<double>("sync.max_stamp_diff_sec", 0.03);
     declare_parameter<std::string>("sync.qos_reliability", "reliable");
@@ -111,6 +119,8 @@ private:
     get_parameter("topics.corrected_current_cloud", corrected_current_cloud_topic_);
     get_parameter("frames.map", map_frame_);
     get_parameter("frames.child", child_frame_);
+    get_parameter("map_save.directory", map_save_directory_);
+    get_parameter("map_save.voxel_leaf_size", map_save_voxel_leaf_size_);
     get_parameter("sync.queue_size", sync_queue_size_);
     get_parameter("sync.max_stamp_diff_sec", max_stamp_diff_sec_);
     get_parameter("sync.qos_reliability", sync_qos_reliability_);
@@ -183,6 +193,10 @@ private:
     corrected_cloud_pub_ = create_publisher<CloudMsg>(corrected_current_cloud_topic_, 10);
     localized_pub_ = create_publisher<std_msgs::msg::Bool>("/r2/localized", 10);
     loop_score_pub_ = create_publisher<std_msgs::msg::Float64>("/r2/sam/loop_score", 10);
+    save_map_srv_ = create_service<std_srvs::srv::Trigger>(
+        "/r2/sam/save_map",
+        std::bind(&FastLioSamScQnNode::saveMapService, this,
+                  std::placeholders::_1, std::placeholders::_2));
 
     rclcpp::QoS qos(static_cast<size_t>(sync_queue_size_));
     if (sync_qos_reliability_ == "best_effort" || sync_qos_reliability_ == "sensor_data") {
@@ -403,6 +417,100 @@ private:
     localized_pub_->publish(msg);
   }
 
+
+  void saveMapService(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    try {
+      const std::string saved_path = saveKeyframeMap(map_save_directory_);
+      response->success = true;
+      response->message = "saved " + std::to_string(keyframes_.size()) +
+                          " keyframes to " + saved_path;
+      RCLCPP_INFO(get_logger(), "保存关键帧地图成功: %s", response->message.c_str());
+    } catch (const std::exception &e) {
+      response->success = false;
+      response->message = e.what();
+      RCLCPP_ERROR(get_logger(), "保存关键帧地图失败: %s", e.what());
+    }
+  }
+
+  std::string saveKeyframeMap(const std::string &directory) {
+    if (directory.empty()) {
+      throw std::runtime_error("map_save.directory is empty");
+    }
+    if (keyframes_.empty()) {
+      throw std::runtime_error("no SAM keyframes to save yet");
+    }
+
+    // 保存协议 v1:
+    //   metadata.txt: 人可读说明与关键帧数量
+    //   poses.csv:    每个关键帧的时间戳、PCD 文件名、优化后 T_map_body 4x4 矩阵
+    //   keyframes/:   每帧 body/local 坐标系点云，文件名与 poses.csv 对应
+    const std::filesystem::path root(directory);
+    const std::filesystem::path keyframes_dir = root / "keyframes";
+    std::filesystem::create_directories(root);
+    std::filesystem::remove_all(keyframes_dir);
+    std::filesystem::create_directories(keyframes_dir);
+    std::filesystem::remove(root / "poses.csv");
+    std::filesystem::remove(root / "metadata.txt");
+
+    std::ofstream metadata(root / "metadata.txt");
+    if (!metadata.is_open()) {
+      throw std::runtime_error("failed to open metadata.txt for writing");
+    }
+    metadata << "format: r2_sam_keyframe_map_v1\n";
+    metadata << "frame_id: " << map_frame_ << "\n";
+    metadata << "cloud_frame: body_local\n";
+    metadata << "cloud_type: pcl::PointXYZI\n";
+    metadata << "pose_type: T_map_body_row_major_4x4\n";
+    metadata << "units: meter\n";
+    metadata << "num_keyframes: " << keyframes_.size() << "\n";
+    metadata << "poses_file: poses.csv\n";
+    metadata << "keyframes_dir: keyframes\n";
+
+    std::ofstream poses(root / "poses.csv");
+    if (!poses.is_open()) {
+      throw std::runtime_error("failed to open poses.csv for writing");
+    }
+    poses << "index,stamp_sec,stamp_nanosec,pcd_file";
+    for (int r = 0; r < 4; ++r) {
+      for (int c = 0; c < 4; ++c) {
+        poses << ",t" << r << c;
+      }
+    }
+    poses << "\n";
+    poses << std::fixed << std::setprecision(12);
+
+    for (size_t i = 0; i < keyframes_.size(); ++i) {
+      const auto &kf = keyframes_[i];
+      std::ostringstream name;
+      name << "keyframe_" << std::setw(6) << std::setfill('0') << i << ".pcd";
+      const std::string pcd_file = name.str();
+      const std::filesystem::path pcd_path = keyframes_dir / pcd_file;
+
+      Cloud cloud_to_save = kf.cloud_local;
+      if (map_save_voxel_leaf_size_ > 1e-6) {
+        cloud_to_save = *voxelizeCloud(kf.cloud_local, static_cast<float>(map_save_voxel_leaf_size_));
+      }
+      if (pcl::io::savePCDFileBinaryCompressed(pcd_path.string(), cloud_to_save) != 0) {
+        throw std::runtime_error("failed to write " + pcd_path.string());
+      }
+
+      const int64_t stamp_ns = kf.stamp.nanoseconds();
+      const int64_t stamp_sec = stamp_ns / 1000000000LL;
+      const int64_t stamp_nsec = stamp_ns % 1000000000LL;
+      poses << kf.index << ',' << stamp_sec << ',' << stamp_nsec << ',' << pcd_file;
+      for (int r = 0; r < 4; ++r) {
+        for (int c = 0; c < 4; ++c) {
+          poses << ',' << kf.pose_corrected(r, c);
+        }
+      }
+      poses << "\n";
+    }
+
+    return root.string();
+  }
+
   std::string odom_topic_;
   std::string cloud_topic_;
   std::string global_odom_topic_;
@@ -411,6 +519,8 @@ private:
   std::string corrected_current_cloud_topic_;
   std::string map_frame_;
   std::string child_frame_;
+  std::string map_save_directory_;
+  double map_save_voxel_leaf_size_ = 0.0;
   int sync_queue_size_ = 30;
   double max_stamp_diff_sec_ = 0.03;
   std::string sync_qos_reliability_ = "reliable";
@@ -436,6 +546,7 @@ private:
   rclcpp::Publisher<CloudMsg>::SharedPtr corrected_cloud_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr localized_pub_;
   rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr loop_score_pub_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr save_map_srv_;
 
   std::unique_ptr<LoopClosure> loop_closure_;
   std::unique_ptr<gtsam::ISAM2> isam_;

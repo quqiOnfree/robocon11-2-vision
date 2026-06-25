@@ -13,6 +13,7 @@ def generate_launch_description():
     fastlio_config_file = LaunchConfiguration('fastlio_config_file')
     backend_config = LaunchConfiguration('backend_config')
     backend_qos_reliability = LaunchConfiguration('backend_qos_reliability')
+    map_save_directory = LaunchConfiguration('map_save_directory')
     run_simple_odom = LaunchConfiguration('run_simple_odom')
     simple_odom_topic = LaunchConfiguration('simple_odom_topic')
     downlink_packet_topic = LaunchConfiguration('downlink_packet_topic')
@@ -48,6 +49,7 @@ def generate_launch_description():
                 'use_sim_time': use_sim_time,
                 # reliable 匹配当前 FAST-LIO 默认发布；若点云发布者是 best-effort，启动时改成 best_effort。
                 'sync.qos_reliability': backend_qos_reliability,
+                'map_save.directory': map_save_directory,
             },
         ],
     )
@@ -73,6 +75,7 @@ def generate_launch_description():
         DeclareLaunchArgument('fastlio_config_file', default_value='mid360.yaml'),
         DeclareLaunchArgument('backend_config', default_value=default_backend_config),
         DeclareLaunchArgument('backend_qos_reliability', default_value='reliable'),
+        DeclareLaunchArgument('map_save_directory', default_value='/tmp/r2_sam_keyframe_map'),
         DeclareLaunchArgument('run_simple_odom', default_value='true'),
         DeclareLaunchArgument('simple_odom_topic', default_value='/r2/global_odometry'),
         DeclareLaunchArgument('downlink_packet_topic', default_value='/r2_serial/downlink/packet'),

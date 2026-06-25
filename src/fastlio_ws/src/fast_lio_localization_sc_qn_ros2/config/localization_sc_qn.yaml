@@ -1,0 +1,58 @@
+fast_lio_localization_sc_qn:
+  ros__parameters:
+    topics:
+      odom: /Odometry
+      cloud: /cloud_registered
+      global_odom: /r2/global_odometry
+      current_pose: /r2_current_pose
+      saved_map: /r2/localization/saved_map
+      corrected_cloud: /r2/localization/corrected_cloud
+      debug_source: /r2/localization/src
+      debug_target: /r2/localization/dst
+      debug_coarse: /r2/localization/coarse_aligned
+      debug_final: /r2/localization/final_aligned
+      match_marker: /r2/localization/matches
+    frames:
+      map: map
+      child: body
+    map:
+      # r2_sam_keyframe_map_v1 地图目录，内部包含 poses.csv 和 keyframes/*.pcd。
+      # 该目录由 /r2/sam/save_map 服务从 SAM 后端直接导出。
+      directory: ""
+      visualize_voxel_size: 1.0
+    sync:
+      queue_size: 30
+      max_stamp_diff_sec: 0.03
+      qos_reliability: reliable
+    keyframe:
+      distance_threshold: 1.0
+      min_points: 80
+    match:
+      timer_hz: 1.0
+      enable_quatro: true
+      # 纯全局重定位时建议 false；如果已有靠谱初值，可设 true 限制候选距离。
+      enable_distance_gate: false
+      num_submap_keyframes: 10
+      voxel_resolution: 0.10
+      scancontext_max_correspondence_distance: 30.0
+    nano_gicp:
+      thread_number: 0
+      correspondences_number: 15
+      max_iterations: 32
+      ransac_iterations: 5
+      max_correspondence_distance: 2.0
+      fitness_score_threshold: 10.0
+      transformation_epsilon: 0.01
+      euclidean_fitness_epsilon: 0.01
+      ransac_outlier_rejection_threshold: 1.0
+    quatro:
+      use_optimized_matching: true
+      estimate_scale: false
+      max_correspondences: 500
+      max_iterations: 50
+      distance_threshold: 30.0
+      fpfh_normal_radius: 0.30
+      fpfh_radius: 0.50
+      noise_bound: 0.30
+      rotation_gnc_factor: 1.40
+      rotation_cost_diff_threshold: 0.0001
