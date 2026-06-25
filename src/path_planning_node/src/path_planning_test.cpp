@@ -199,6 +199,9 @@ int main() {
       case path_planning::command::grab_highest_r2_kfs:
         std::cout << "Grab Highest R2 KFS\n";
         break;
+      case path_planning::command::turn_around:
+        std::cout << "Turn Around\n";
+        break;
       default:
         std::cout << "Unknown Command\n";
         break;
