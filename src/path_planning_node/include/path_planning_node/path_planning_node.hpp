@@ -115,6 +115,45 @@ public:
         }
       }
       this->send_command(cmd);
+      RCLCPP_INFO(this->get_logger(), "Received a request from command topic");
+      switch (cmd) {
+      case path_planning::command::move_forward:
+        RCLCPP_INFO(this->get_logger(), "Move Forward");
+        break;
+      case path_planning::command::move_backward:
+        RCLCPP_INFO(this->get_logger(), "Move Backward");
+        break;
+      case path_planning::command::turn_left:
+        RCLCPP_INFO(this->get_logger(), "Turn Left");
+        break;
+      case path_planning::command::turn_right:
+        RCLCPP_INFO(this->get_logger(), "Turn Right");
+        break;
+      case path_planning::command::grab_lower_r2_kfs:
+        RCLCPP_INFO(this->get_logger(), "Grab Lower R2 KFS");
+        break;
+      case path_planning::command::grab_higher_r2_kfs:
+        RCLCPP_INFO(this->get_logger(), "Grab Higher R2 KFS");
+        break;
+      case path_planning::command::grab_highest_r2_kfs:
+        RCLCPP_INFO(this->get_logger(), "Grab Highest R2 KFS");
+        break;
+      case path_planning::command::move_left:
+        RCLCPP_INFO(this->get_logger(), "Move Left");
+        break;
+      case path_planning::command::move_right:
+        RCLCPP_INFO(this->get_logger(), "Move Right");
+        break;
+      case path_planning::command::turn_around:
+        RCLCPP_INFO(this->get_logger(), "Turn Around");
+        break;
+      case path_planning::command::complete_task:
+        RCLCPP_INFO(this->get_logger(), "Complete task");
+        break;
+      default:
+        RCLCPP_INFO(this->get_logger(), "Unknown command");
+        break;
+      }
     });
 
     path_publisher_ =
@@ -175,37 +214,44 @@ public:
                         output_msg.data.c_str());
             path_publisher_->publish(output_msg);
 
-            std::cout << "Commands generated:\n";
+            RCLCPP_INFO(this->get_logger(), "Commands generated:");
             while (!commands.empty()) {
               switch (commands.front()) {
               case path_planning::command::move_forward:
-                std::cout << "Move Forward\n";
+                RCLCPP_INFO(this->get_logger(), "Move Forward");
                 break;
               case path_planning::command::move_backward:
-                std::cout << "Move Backward\n";
+                RCLCPP_INFO(this->get_logger(), "Move Backward");
                 break;
               case path_planning::command::turn_left:
-                std::cout << "Turn Left\n";
+                RCLCPP_INFO(this->get_logger(), "Turn Left");
                 break;
               case path_planning::command::turn_right:
-                std::cout << "Turn Right\n";
+                RCLCPP_INFO(this->get_logger(), "Turn Right");
                 break;
               case path_planning::command::grab_lower_r2_kfs:
-                std::cout << "Grab Lower R2 KFS\n";
+                RCLCPP_INFO(this->get_logger(), "Grab Lower R2 KFS");
                 break;
               case path_planning::command::grab_higher_r2_kfs:
-                std::cout << "Grab Higher R2 KFS\n";
+                RCLCPP_INFO(this->get_logger(), "Grab Higher R2 KFS");
                 break;
               case path_planning::command::grab_highest_r2_kfs:
-                std::cout << "Grab Highest R2 KFS\n";
+                RCLCPP_INFO(this->get_logger(), "Grab Highest R2 KFS");
                 break;
               case path_planning::command::move_left:
-                std::cout << "Move Left\n";
+                RCLCPP_INFO(this->get_logger(), "Move Left");
                 break;
               case path_planning::command::move_right:
-                std::cout << "Move Right\n";
+                RCLCPP_INFO(this->get_logger(), "Move Right");
+                break;
+              case path_planning::command::turn_around:
+                RCLCPP_INFO(this->get_logger(), "Turn Around");
+                break;
+              case path_planning::command::complete_task:
+                RCLCPP_INFO(this->get_logger(), "Complete task");
                 break;
               default:
+                RCLCPP_INFO(this->get_logger(), "Unknown command");
                 break;
               }
               commands.pop();

@@ -317,7 +317,7 @@ private:
     path_no_command_sub_ = createEmptyCommandSubscription(
         path_no_command_topic_, protocol::kPathNoCommand, false);
     path_turn_around_180_sub_ = createEmptyCommandSubscription(
-        path_turn_right_90_topic_, protocol::kPathTurnAround180, false);
+        path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
 
     if (!pose_odom_topic_.empty()) {
       pose_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
