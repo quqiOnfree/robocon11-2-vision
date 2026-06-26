@@ -115,7 +115,7 @@ public:
         }
       }
       this->send_command(cmd);
-      RCLCPP_INFO(this->get_logger(), "receive a request");
+      RCLCPP_INFO(this->get_logger(), "Received a request from command topic");
       switch (cmd) {
       case path_planning::command::move_forward:
         RCLCPP_INFO(this->get_logger(), "Move Forward");
@@ -145,10 +145,11 @@ public:
         RCLCPP_INFO(this->get_logger(), "Move Right");
         break;
       case path_planning::command::turn_around:
-        RCLCPP_INFO(this->get_logger(), "Turn around");
+        RCLCPP_INFO(this->get_logger(), "Turn Around");
         break;
       case path_planning::command::complete_task:
-        RCLCPP_INFO(this->get_logger(), "Completed");
+        RCLCPP_INFO(this->get_logger(), "Complete task");
+        break;
       default:
         RCLCPP_INFO(this->get_logger(), "Unknown command");
         break;
@@ -213,7 +214,7 @@ public:
                         output_msg.data.c_str());
             path_publisher_->publish(output_msg);
 
-            std::cout << "Commands generated:\n";
+            RCLCPP_INFO(this->get_logger(), "Commands generated:");
             while (!commands.empty()) {
               switch (commands.front()) {
               case path_planning::command::move_forward:
@@ -244,10 +245,11 @@ public:
                 RCLCPP_INFO(this->get_logger(), "Move Right");
                 break;
               case path_planning::command::turn_around:
-                RCLCPP_INFO(this->get_logger(), "Turn around");
+                RCLCPP_INFO(this->get_logger(), "Turn Around");
                 break;
               case path_planning::command::complete_task:
-                RCLCPP_INFO(this->get_logger(), "Completed");
+                RCLCPP_INFO(this->get_logger(), "Complete task");
+                break;
               default:
                 RCLCPP_INFO(this->get_logger(), "Unknown command");
                 break;

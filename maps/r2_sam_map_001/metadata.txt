@@ -1,0 +1,9 @@
+format: r2_sam_keyframe_map_v1
+frame_id: map
+cloud_frame: body_local
+cloud_type: pcl::PointXYZI
+pose_type: T_map_body_row_major_4x4
+units: meter
+num_keyframes: 42
+poses_file: poses.csv
+keyframes_dir: keyframes
