@@ -135,7 +135,9 @@ private:
   void update_display() {
     if (!show_window_ || display_frame_.empty())
       return;
-    cv::imshow("Weapon&&Pole Detection", display_frame_);
+    cv::Mat display;
+    cv::resize(display_frame_, display, {}, 0.5, 0.5);
+    cv::imshow("Weapon&&Pole Detection", display);
     if (cv::waitKey(1) == 27) {
       rclcpp::shutdown();
     }
@@ -185,7 +187,7 @@ private:
       }
       frame_count_++;
       if (show_window_)
-        display_frame_ = frame.clone();
+        display_frame_ = frame;
       return;
     }
     // 武器检测
@@ -225,7 +227,7 @@ private:
 
       // 可视化
       if (show_window_) {
-        cv::Mat display = frame.clone();
+        cv::Mat display = frame;
         pipeline_->drawTarget(display, target);
 
         auto t1 = std::chrono::steady_clock::now();
@@ -259,7 +261,7 @@ private:
       }
       frame_count_++;
       if (show_window_)
-        display_frame_ = frame.clone();
+        display_frame_ = frame;
       return;
     }
     // 长杆检测状态
@@ -281,7 +283,8 @@ private:
       if (best) {
         cv::Point img_center(frame.cols / 2, frame.rows / 2);
         pole_center = best->center();
-        distance = static_cast<float>(pole_center.x - img_center.x);
+        // 加负号是因为下位机只支持一种方向，杆子摄像头跟武器摄像头计算相反
+        distance = -static_cast<float>(pole_center.x - img_center.x);
       }
 
       // 发布距离到 ROS2 话题
@@ -302,7 +305,7 @@ private:
 
       // 可视化
       if (show_window_) {
-        cv::Mat display = frame.clone();
+        cv::Mat display = frame;
 
         const cv::Point img_center(display.cols / 2, display.rows / 2);
 
@@ -347,7 +350,7 @@ private:
           t0_ = t1;
         }
 
-        display_frame_ = display.clone();
+        display_frame_ = display;
       }
     }
 

@@ -70,6 +70,7 @@ public:
       break;
     case path_planning::command::turn_around:
       path_turn_around_pub_->publish(msg);
+      break;
     default:
       path_no_command_pub_->publish(msg);
       break;
