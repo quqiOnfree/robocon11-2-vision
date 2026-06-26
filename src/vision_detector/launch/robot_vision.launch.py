@@ -84,10 +84,10 @@ def generate_launch_description():
     #     description="杆子节点是否启用串口")
 
     # ==================== 节点 ====================
-    weapon_pole_node = Node(
+    weapon_pole = Node(
             package="vision_detector",
-            executable="weapon_pole_node",
-            name="weapon_pole_node",
+            executable="weapon_pole",
+            name="weapon_pole",
             parameters=[{
                 "weapon_model_path": LaunchConfiguration("weapon_model"),
                 "pole_model_path": LaunchConfiguration("pole_model"),
@@ -163,5 +163,5 @@ def generate_launch_description():
         # 节点
         # weapon_node,
         # pole_node,
-        weapon_pole_node
+        weapon_pole
     ])
