@@ -79,8 +79,8 @@ public:
         "height_compensation.use_initial_z_as_reference", true);
     height_compensation_reference_z_ = declare_parameter<double>(
         "height_compensation.reference_z", 0.0);
-    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1372);
-    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.3420);
+    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
+    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
     const auto staged_values = declare_parameter<std::vector<double>>(
         "sequence.staged_up_targets", std::vector<double>{});
     const auto home_values = declare_parameter<std::vector<double>>(
