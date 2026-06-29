@@ -42,7 +42,7 @@ public:
     this->declare_parameter("weapon_camera_index", 0);
     this->declare_parameter("pole_camera_index", 2);
     this->declare_parameter("conf_thres", 0.25);
-    this->declare_parameter("show_window", true);
+    this->declare_parameter("show_window", false);
 
     // 订阅状态指令话题
     state_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
@@ -134,13 +134,12 @@ public:
   }
 
 private:
-  void update_display() const {
-    {
-      std::lock_guard<std::mutex> lock{display_mtx_};
-      if (!show_window_ || display_frame_.empty())
-        return;
-      cv::imshow("Weapon&&Pole Detection", display_frame_);
-    }
+  void update_display() {
+    if (!show_window_ || display_frame_.empty())
+      return;
+    cv::Mat display;
+    cv::resize(display_frame_, display, {}, 0.5, 0.5);
+    cv::imshow("Weapon&&Pole Detection", display);
     if (cv::waitKey(1) == 27) {
       rclcpp::shutdown();
     }
@@ -277,8 +276,7 @@ private:
       if (best) {
         cv::Point img_center(frame.cols / 2, frame.rows / 2);
         pole_center = best->center();
-        // add a minus because the downlink need the same direction,
-        // but we use two cameras with different direction
+        // 加负号是因为下位机只支持一种方向，杆子摄像头跟武器摄像头计算相反
         distance = -static_cast<float>(pole_center.x - img_center.x);
 
         // 发布距离到 ROS2 话题

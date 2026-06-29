@@ -33,7 +33,7 @@ def generate_launch_description():
         "weapon_pole_conf", default_value="0.25",
         description="武器检测置信度阈值")
     weapon_show_arg = DeclareLaunchArgument(
-        "weapon_pole_show_window", default_value="true",
+        "weapon_pole_show_window", default_value="false",
         description="武器节点显示窗口")
 
 
@@ -84,10 +84,10 @@ def generate_launch_description():
     #     description="杆子节点是否启用串口")
 
     # ==================== 节点 ====================
-    weapon_pole_node = Node(
+    weapon_pole = Node(
             package="vision_detector",
-            executable="weapon_pole_node",
-            name="weapon_pole_node",
+            executable="weapon_pole",
+            name="weapon_pole",
             parameters=[{
                 "weapon_model_path": LaunchConfiguration("weapon_model"),
                 "pole_model_path": LaunchConfiguration("pole_model"),
@@ -163,5 +163,5 @@ def generate_launch_description():
         # 节点
         # weapon_node,
         # pole_node,
-        weapon_pole_node
+        weapon_pole
     ])
