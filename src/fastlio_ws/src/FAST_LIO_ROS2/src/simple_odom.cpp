@@ -1,5 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -14,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -25,12 +27,20 @@ namespace protocol = r2_serial::protocol;
 
 class R2PoseReporter : public rclcpp::Node {
 public:
+  enum class Zone : std::uint8_t {
+    kUnlocked,
+    kBlue,
+    kRed,
+  };
+
   R2PoseReporter() : Node("r2_pose_reporter") {
     odom_topic_ = declare_parameter<std::string>("odom_topic", "/Odometry");
     downlink_packet_topic_ = declare_parameter<std::string>(
         "downlink_packet_topic", "/r2_serial/downlink/packet");
     status_service_name_ = declare_parameter<std::string>(
         "status_service_name", "/r2_pose_reporter/report_status");
+    localized_topic_ = declare_parameter<std::string>(
+        "localized_topic", "/r2/localized");
 
     // 兼容旧启动参数：simple_odom 现在不再直接打开串口，串口统一交给 r2_serial 节点。
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
@@ -55,6 +65,12 @@ public:
         "height_compensation.reference_z", 0.0);
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
+    blue_start_point_ = declare_parameter<std::vector<double>>(
+        "blue_start_point", std::vector<double>{-310.0, -115.0});
+    red_start_point_ = declare_parameter<std::vector<double>>(
+        "red_start_point", std::vector<double>{-310.0, -2950.0});
+    mirror_center_y_ = declare_parameter<double>("mirror_center_y", -1532.5);
+    validateZoneParameters();
 
     if (height_compensation_auto_disable_for_global_ && isGlobalOdomTopic(odom_topic_)) {
       height_compensation_enabled_ = false;
@@ -66,6 +82,13 @@ public:
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 10,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
+    localized_sub_ = create_subscription<std_msgs::msg::Bool>(
+        localized_topic_, 10,
+        [this](const std_msgs::msg::Bool::SharedPtr msg) {
+          if (msg->data) {
+            localization_confirmed_.store(true);
+          }
+        });
     status_srv_ = create_service<std_srvs::srv::Trigger>(
         status_service_name_,
         std::bind(&R2PoseReporter::handleStatusService, this,
@@ -77,7 +100,12 @@ public:
     RCLCPP_INFO(get_logger(), "订阅里程计: %s", odom_topic_.c_str());
     RCLCPP_INFO(get_logger(), "位姿上报发布到: %s", downlink_packet_topic_.c_str());
     RCLCPP_INFO(get_logger(), "状态查询服务: %s", status_service_name_.c_str());
+    RCLCPP_INFO(get_logger(), "定位有效状态订阅自: %s", localized_topic_.c_str());
     RCLCPP_INFO(get_logger(), "车体中心外参: x=%.4f m y=%.4f m", base_offset_x_, base_offset_y_);
+    RCLCPP_INFO(get_logger(),
+                "半区侦测参数(mm): BLUE=[%.1f, %.1f] RED=[%.1f, %.1f] mirror_y=%.1f",
+                blue_start_point_[0], blue_start_point_[1],
+                red_start_point_[0], red_start_point_[1], mirror_center_y_);
     if (height_compensation_enabled_) {
       RCLCPP_INFO(get_logger(),
                   "升降高度补偿已启用: x_per_z=%.6f y_per_z=%.6f reference=%s%.3f",
@@ -96,6 +124,8 @@ public:
   }
 
 private:
+  static constexpr std::size_t kZoneDetectionSamples = 10;
+
   static std::uint64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::steady_clock::now().time_since_epoch())
@@ -129,6 +159,64 @@ private:
     return payload;
   }
 
+  void validateZoneParameters() const {
+    if (blue_start_point_.size() != 2 || red_start_point_.size() != 2) {
+      throw std::invalid_argument(
+          "blue_start_point 和 red_start_point 必须各包含两个数值 [x_mm, y_mm]");
+    }
+    if (!std::isfinite(blue_start_point_[0]) ||
+        !std::isfinite(blue_start_point_[1]) ||
+        !std::isfinite(red_start_point_[0]) ||
+        !std::isfinite(red_start_point_[1]) ||
+        !std::isfinite(mirror_center_y_)) {
+      throw std::invalid_argument("半区侦测坐标参数必须是有限数值");
+    }
+  }
+
+  static const char *zoneName(Zone zone) {
+    switch (zone) {
+    case Zone::kBlue:
+      return "Blue";
+    case Zone::kRed:
+      return "Red";
+    default:
+      return "Unlocked";
+    }
+  }
+
+  bool updateZoneDetection(double x_mm, double y_mm) {
+    if (zone_.load() != Zone::kUnlocked) {
+      return true;
+    }
+
+    zone_detection_sum_x_ += x_mm;
+    zone_detection_sum_y_ += y_mm;
+    ++zone_detection_sample_count_;
+    if (zone_detection_sample_count_ < kZoneDetectionSamples) {
+      return false;
+    }
+
+    const double mean_x =
+        zone_detection_sum_x_ / static_cast<double>(zone_detection_sample_count_);
+    const double mean_y =
+        zone_detection_sum_y_ / static_cast<double>(zone_detection_sample_count_);
+    const double blue_distance =
+        std::hypot(mean_x - blue_start_point_[0], mean_y - blue_start_point_[1]);
+    const double red_distance =
+        std::hypot(mean_x - red_start_point_[0], mean_y - red_start_point_[1]);
+    const Zone detected =
+        blue_distance <= red_distance ? Zone::kBlue : Zone::kRed;
+    zone_.store(detected);
+
+    RCLCPP_INFO(
+        get_logger(),
+        "================ [Zone Detected] Locked to %s zone. "
+        "mean=(%.1f, %.1f) mm, distance: BLUE=%.1f mm RED=%.1f mm ================",
+        detected == Zone::kBlue ? "BLUE" : "RED", mean_x, mean_y,
+        blue_distance, red_distance);
+    return true;
+  }
+
   void keyboardLoop() {
     std::string line;
     while (rclcpp::ok() && std::getline(std::cin, line)) {
@@ -159,6 +247,13 @@ private:
         << " mm | Y: " << current_y_.load()
         << " mm | Z: " << current_z_.load()
         << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
+    out << "全局定位确认 : "
+        << (localization_confirmed_.load() ? "已收到 /r2/localized=true" : "等待定位成功")
+        << "\n";
+    out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
+    out << "实际下发位姿 : X: " << output_x_.load()
+        << " mm | Y: " << output_y_.load()
+        << " mm | Yaw: " << output_yaw_deg_.load() << " deg\n";
     if (height_compensation_enabled_) {
       out << "升降补偿状态 : ref_z=" << height_compensation_reference_z_mm_.load()
           << " mm | dx=" << height_compensation_dx_mm_.load()
@@ -261,13 +356,37 @@ private:
     }
     current_yaw_deg_.store(*yaw_deg);
 
-    publishPosition(*x_mm, *y_mm, *yaw_deg);
+    // 定位成功前以及锁区前均不下发，避免把局部原点误判成蓝区。
+    if (!localization_confirmed_.load() || !updateZoneDetection(*x_mm, *y_mm)) {
+      return;
+    }
+
+    double output_x_mm = *x_mm;
+    double output_y_mm = *y_mm;
+    double output_yaw = *yaw_deg;
+    if (zone_.load() == Zone::kRed) {
+      output_y_mm = 2.0 * mirror_center_y_ - output_y_mm;
+      output_yaw = -output_yaw;
+    }
+
+    const auto mapped_x = checkedInt16(output_x_mm, "映射位置 X");
+    const auto mapped_y = checkedInt16(output_y_mm, "映射位置 Y");
+    const auto mapped_yaw = checkedInt16(output_yaw, "映射位置 Yaw");
+    if (!mapped_x || !mapped_y || !mapped_yaw) {
+      return;
+    }
+
+    output_x_.store(*mapped_x);
+    output_y_.store(*mapped_y);
+    output_yaw_deg_.store(*mapped_yaw);
+    publishPosition(*mapped_x, *mapped_y, *mapped_yaw);
   }
 
   std::thread keyboard_thread_;
   std::string odom_topic_;
   std::string downlink_packet_topic_;
   std::string status_service_name_;
+  std::string localized_topic_;
 
   bool height_compensation_enabled_{true};
   bool height_compensation_auto_disable_for_global_{true};
@@ -278,9 +397,18 @@ private:
   double height_compensation_reference_z_{0.0};
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
+  std::vector<double> blue_start_point_;
+  std::vector<double> red_start_point_;
+  double mirror_center_y_{-1532.5};
+  std::atomic<Zone> zone_{Zone::kUnlocked};
+  double zone_detection_sum_x_{0.0};
+  double zone_detection_sum_y_{0.0};
+  std::size_t zone_detection_sample_count_{0};
+  std::atomic<bool> localization_confirmed_{false};
   std::atomic<bool> height_reference_initialized_{false};
 
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr localized_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
 
@@ -288,6 +416,9 @@ private:
   std::atomic<std::int16_t> current_y_{0};
   std::atomic<std::int16_t> current_z_{0};
   std::atomic<std::int16_t> current_yaw_deg_{0};
+  std::atomic<std::int16_t> output_x_{0};
+  std::atomic<std::int16_t> output_y_{0};
+  std::atomic<std::int16_t> output_yaw_deg_{0};
   std::atomic<std::int16_t> height_compensation_reference_z_mm_{0};
   std::atomic<std::int16_t> height_compensation_dx_mm_{0};
   std::atomic<std::int16_t> height_compensation_dy_mm_{0};
