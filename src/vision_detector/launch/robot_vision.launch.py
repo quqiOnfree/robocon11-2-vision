@@ -33,7 +33,7 @@ def generate_launch_description():
         "weapon_pole_conf", default_value="0.25",
         description="武器检测置信度阈值")
     weapon_show_arg = DeclareLaunchArgument(
-        "weapon_pole_show_window", default_value="true",
+        "weapon_pole_show_window", default_value="false",
         description="武器节点显示窗口")
 
 

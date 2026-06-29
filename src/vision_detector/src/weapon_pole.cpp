@@ -42,7 +42,7 @@ public:
     this->declare_parameter("weapon_camera_index", 0);
     this->declare_parameter("pole_camera_index", 2);
     this->declare_parameter("conf_thres", 0.25);
-    this->declare_parameter("show_window", true);
+    this->declare_parameter("show_window", false);
 
     // 订阅状态指令话题
     state_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
