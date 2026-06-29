@@ -5,9 +5,52 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/empty.hpp>
+#include <std_msgs/msg/u_int16.hpp>
 #include <span>
 
 #include "path_planning_node/path_planning.hpp"
+
+template<typename Node>
+inline static void print_command(const Node* node, path_planning::command cmd) {
+  switch (cmd) {
+  case path_planning::command::move_forward:
+    RCLCPP_INFO(node->get_logger(), "Move Forward");
+    break;
+  case path_planning::command::move_backward:
+    RCLCPP_INFO(node->get_logger(), "Move Backward");
+    break;
+  case path_planning::command::turn_left:
+    RCLCPP_INFO(node->get_logger(), "Turn Left");
+    break;
+  case path_planning::command::turn_right:
+    RCLCPP_INFO(node->get_logger(), "Turn Right");
+    break;
+  case path_planning::command::grab_lower_r2_kfs:
+    RCLCPP_INFO(node->get_logger(), "Grab Lower R2 KFS");
+    break;
+  case path_planning::command::grab_higher_r2_kfs:
+    RCLCPP_INFO(node->get_logger(), "Grab Higher R2 KFS");
+    break;
+  case path_planning::command::grab_highest_r2_kfs:
+    RCLCPP_INFO(node->get_logger(), "Grab Highest R2 KFS");
+    break;
+  case path_planning::command::move_left:
+    RCLCPP_INFO(node->get_logger(), "Move Left");
+    break;
+  case path_planning::command::move_right:
+    RCLCPP_INFO(node->get_logger(), "Move Right");
+    break;
+  case path_planning::command::turn_around:
+    RCLCPP_INFO(node->get_logger(), "Turn Around");
+    break;
+  case path_planning::command::complete_task:
+    RCLCPP_INFO(node->get_logger(), "Complete task");
+    break;
+  default:
+    RCLCPP_INFO(node->get_logger(), "Unknown command");
+    break;
+  }
+}
 
 class PathPlanningSenderNReceiver {
 public:
@@ -32,10 +75,21 @@ public:
             command_callback_();
           }
         });
+    path_request_new_sub_ = node_->create_subscription<std_msgs::msg::UInt16>(
+        "/r2_serial/uplink/path_request_next_new", 10,
+        [this](const std_msgs::msg::UInt16::SharedPtr msg){
+          if (command_with_index_callback_) {
+            command_with_index_callback_(msg->data);
+          }
+        });
   }
 
   void setCommandCallback(std::function<void()> callback) {
     command_callback_ = std::move(callback);
+  }
+
+  void setCommandWithIndexCallback(std::function<void(std::uint16_t)> callback) {
+    command_with_index_callback_ = std::move(callback);
   }
 
   void publish(path_planning::command cmd) {
@@ -80,6 +134,7 @@ public:
 private:
   rclcpp::Node* node_;
   std::function<void()> command_callback_;
+  std::function<void(std::uint16_t)> command_with_index_callback_;
 
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_forward_pub_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_backward_pub_;
@@ -95,6 +150,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_turn_around_pub_;
 
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_request_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr path_request_new_sub_;
 };
 
 class PathPlanningNode : public rclcpp::Node {
@@ -106,54 +162,33 @@ public:
     sender_receiver_.setCommandCallback([this]() {
       path_planning::command cmd{path_planning::command::complete_task};
       {
-        std::lock_guard<std::mutex> lock(command_queue_mutex_);
-        if (command_queue_.empty()) {
+        std::lock_guard<std::mutex> lock(command_array_mutex_);
+        if (command_array_.empty()) {
           cmd = path_planning::command::complete_task;
         } else {
-          cmd = std::move(command_queue_.front());
-          command_queue_.pop();
+          cmd = command_array_[command_array_index_++];
         }
       }
       this->send_command(cmd);
       RCLCPP_INFO(this->get_logger(), "Received a request from command topic");
-      switch (cmd) {
-      case path_planning::command::move_forward:
-        RCLCPP_INFO(this->get_logger(), "Move Forward");
-        break;
-      case path_planning::command::move_backward:
-        RCLCPP_INFO(this->get_logger(), "Move Backward");
-        break;
-      case path_planning::command::turn_left:
-        RCLCPP_INFO(this->get_logger(), "Turn Left");
-        break;
-      case path_planning::command::turn_right:
-        RCLCPP_INFO(this->get_logger(), "Turn Right");
-        break;
-      case path_planning::command::grab_lower_r2_kfs:
-        RCLCPP_INFO(this->get_logger(), "Grab Lower R2 KFS");
-        break;
-      case path_planning::command::grab_higher_r2_kfs:
-        RCLCPP_INFO(this->get_logger(), "Grab Higher R2 KFS");
-        break;
-      case path_planning::command::grab_highest_r2_kfs:
-        RCLCPP_INFO(this->get_logger(), "Grab Highest R2 KFS");
-        break;
-      case path_planning::command::move_left:
-        RCLCPP_INFO(this->get_logger(), "Move Left");
-        break;
-      case path_planning::command::move_right:
-        RCLCPP_INFO(this->get_logger(), "Move Right");
-        break;
-      case path_planning::command::turn_around:
-        RCLCPP_INFO(this->get_logger(), "Turn Around");
-        break;
-      case path_planning::command::complete_task:
-        RCLCPP_INFO(this->get_logger(), "Complete task");
-        break;
-      default:
-        RCLCPP_INFO(this->get_logger(), "Unknown command");
-        break;
+      print_command(this, cmd);
+    });
+
+    sender_receiver_.setCommandWithIndexCallback([this](std::uint16_t index){
+      path_planning::command cmd{path_planning::command::complete_task};
+      {
+        std::lock_guard<std::mutex> lock(command_array_mutex_);
+        if (index >= command_array_.size()) {
+          cmd = path_planning::command::complete_task;
+        } else {
+          cmd = command_array_[index];
+        }
       }
+      this->send_command(cmd);
+      RCLCPP_INFO(this->get_logger(), "Received a request with index %d "
+        "from command topic",
+        static_cast<int>(index));
+      print_command(this, cmd);
     });
 
     path_publisher_ =
@@ -195,8 +230,14 @@ public:
                 planner_->generate_commands(m_map, level_map);
 
             {
-              std::lock_guard<std::mutex> lock(command_queue_mutex_);
-              command_queue_ = commands;
+              std::lock_guard<std::mutex> lock(command_array_mutex_);
+              auto local_commands{commands};
+              command_array_.clear();
+              command_array_index_ = 0;
+              while (!local_commands.empty()) {
+                command_array_.push_back(std::move(local_commands.front()));
+                local_commands.pop();
+              }
             }
 
             nlohmann::json output_json = nlohmann::json::object();
@@ -216,44 +257,7 @@ public:
 
             RCLCPP_INFO(this->get_logger(), "Commands generated:");
             while (!commands.empty()) {
-              switch (commands.front()) {
-              case path_planning::command::move_forward:
-                RCLCPP_INFO(this->get_logger(), "Move Forward");
-                break;
-              case path_planning::command::move_backward:
-                RCLCPP_INFO(this->get_logger(), "Move Backward");
-                break;
-              case path_planning::command::turn_left:
-                RCLCPP_INFO(this->get_logger(), "Turn Left");
-                break;
-              case path_planning::command::turn_right:
-                RCLCPP_INFO(this->get_logger(), "Turn Right");
-                break;
-              case path_planning::command::grab_lower_r2_kfs:
-                RCLCPP_INFO(this->get_logger(), "Grab Lower R2 KFS");
-                break;
-              case path_planning::command::grab_higher_r2_kfs:
-                RCLCPP_INFO(this->get_logger(), "Grab Higher R2 KFS");
-                break;
-              case path_planning::command::grab_highest_r2_kfs:
-                RCLCPP_INFO(this->get_logger(), "Grab Highest R2 KFS");
-                break;
-              case path_planning::command::move_left:
-                RCLCPP_INFO(this->get_logger(), "Move Left");
-                break;
-              case path_planning::command::move_right:
-                RCLCPP_INFO(this->get_logger(), "Move Right");
-                break;
-              case path_planning::command::turn_around:
-                RCLCPP_INFO(this->get_logger(), "Turn Around");
-                break;
-              case path_planning::command::complete_task:
-                RCLCPP_INFO(this->get_logger(), "Complete task");
-                break;
-              default:
-                RCLCPP_INFO(this->get_logger(), "Unknown command");
-                break;
-              }
+              print_command(this, commands.front());
               commands.pop();
             }
           } catch (const std::exception &e) {
@@ -268,8 +272,9 @@ public:
   }
 
 private:
-  std::queue<path_planning::command> command_queue_;
-  mutable std::mutex command_queue_mutex_;
+  std::vector<path_planning::command> command_array_;
+  std::size_t command_array_index_{0};
+  mutable std::mutex command_array_mutex_;
   std::shared_ptr<rclcpp::Subscription<std_msgs::msg::String>> grid_subscriber_;
   std::shared_ptr<rclcpp::Publisher<std_msgs::msg::String>> path_publisher_;
   PathPlanningSenderNReceiver sender_receiver_;
