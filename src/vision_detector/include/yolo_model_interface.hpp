@@ -48,7 +48,7 @@ protected:
     sessionOptions_.SetGraphOptimizationLevel(
         GraphOptimizationLevel::ORT_ENABLE_ALL);
     // 线程数可按设备调整；嵌入式常见做法是先设 1，再按性能调参
-    sessionOptions_.SetIntraOpNumThreads(1);
+    sessionOptions_.SetIntraOpNumThreads(6);
 
     session_ = Ort::Session(env_, modelPath.c_str(), sessionOptions_);
 

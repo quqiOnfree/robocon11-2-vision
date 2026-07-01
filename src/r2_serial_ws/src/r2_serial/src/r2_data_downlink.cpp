@@ -159,6 +159,8 @@ private:
         "topics.path.replace_kfs", "/r2_serial/downlink/path/replace_kfs");
     path_no_command_topic_ = declare_parameter<std::string>(
         "topics.path.no_command", "/r2_serial/downlink/path/no_command");
+    path_turn_around_180_topic_ = declare_parameter<std::string>(
+      "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
 
     uplink_packet_topic_ = declare_parameter<std::string>(
         "topics.uplink_packet", "/r2_serial/uplink/packet");
@@ -170,6 +172,8 @@ private:
         "topics.uplink_event_code_r2", "/r2/uplink/event_code");
     path_request_topic_ = declare_parameter<std::string>(
         "topics.path.request_next", "/r2_serial/uplink/path_request_next");
+    path_request_new_topic_ = declare_parameter<std::string>(
+        "topics.path.request_next_new", "/r2_serial/uplink/path_request_next_new");
     vision_weapon_pole_state_topic_ = declare_parameter<std::string>(
         "topics.vision_weapon_pole_state", "/vision/weapon_pole_cmd_state_2");
   }
@@ -317,6 +321,7 @@ private:
     createUplinkEventPublisher(uplink_event_topic_);
     createUplinkEventPublisher(uplink_event_r2_topic_);
     path_request_pub_ = create_publisher<std_msgs::msg::Empty>(path_request_topic_, 10);
+    path_request_new_pub_ = create_publisher<std_msgs::msg::UInt16>(path_request_new_topic_, 10);
     vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
         vision_weapon_pole_state_topic_, 10);
 
@@ -370,6 +375,8 @@ private:
         path_replace_kfs_topic_, protocol::kPathReplaceKfs, false);
     path_no_command_sub_ = createEmptyCommandSubscription(
         path_no_command_topic_, protocol::kPathNoCommand, false);
+    path_turn_around_180_sub_ = createEmptyCommandSubscription(
+        path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
 
     if (!pose_odom_topic_.empty()) {
       pose_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -558,6 +565,7 @@ private:
 
     publishVisionStateCommand(packet);
     publishPathRequest(packet);
+    publishPathRequestNew(packet);
 
     if (serial_debug_raw_) {
       const auto payload_hex = bytesToHex(packet.body_data(), packet.body_size());
@@ -598,6 +606,26 @@ private:
     path_request_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s",
                 packet.code(), path_request_topic_.c_str());
+  }
+
+  void publishPathRequestNew(const packet_t &packet) {
+    if (packet.code() != protocol::kPathRequestNextNew) {
+      return;
+    }
+    if (packet.body_size() < sizeof(std::uint16_t)) {
+      RCLCPP_ERROR(this->get_logger(),
+        "new path planning request with a empty payload,"
+        " ignore this request");
+      return;
+    }
+    std_msgs::msg::UInt16 msg;
+    std::uint16_t data{};
+    data |= packet.body_data()[0];
+    data |= (packet.body_data()[1] << 8) & 0xFF;
+    msg.data = data;
+    path_request_new_pub_->publish(msg);
+    RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s, index=%d",
+                packet.code(), path_request_topic_.c_str(), static_cast<int>(msg.data));
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
@@ -690,12 +718,14 @@ private:
   std::string path_grab_high_kfs_topic_;
   std::string path_replace_kfs_topic_;
   std::string path_no_command_topic_;
+  std::string path_turn_around_180_topic_;
 
   std::string uplink_packet_topic_;
   std::string uplink_packet_r2_topic_;
   std::string uplink_event_topic_;
   std::string uplink_event_r2_topic_;
   std::string path_request_topic_;
+  std::string path_request_new_topic_;
   std::string vision_weapon_pole_state_topic_;
 
   std::atomic<std::uint64_t> tx_success_count_{0};
@@ -726,11 +756,13 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_grab_high_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
 
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
   std::vector<rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr> uplink_event_pubs_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_request_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr path_request_new_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_weapon_pole_state_pub_;
 };
 

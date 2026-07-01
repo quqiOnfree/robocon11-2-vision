@@ -16,13 +16,14 @@
 #include <functional>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 
 class VisionDetectorNode : public rclcpp::Node {
 public:
-  enum State : uint8_t {
+  enum State : std::uint8_t {
     IDLE = 0,
     WEAPON_TRACKING = 1,
     WAITING = 2,
@@ -30,16 +31,18 @@ public:
     GRAB = 4
   };
 
+  // 武器和长杆总结到同一个
+  inline static constexpr uint16_t weapon_pole_code_v = 0x0001;
+
   VisionDetectorNode()
-      : Node("weapon_pole_node"), current_state_(IDLE), frame_count_(0),
-        grab_triggered_(false) {
+      : Node("weapon_pole_node"), current_state_(IDLE), grab_triggered_(false) {
     // 声明参数
     this->declare_parameter("weapon_model_path", "model/weapon_pickup.onnx");
     this->declare_parameter("pole_model_path", "model/pole_detect.onnx");
     this->declare_parameter("weapon_camera_index", 0);
     this->declare_parameter("pole_camera_index", 2);
     this->declare_parameter("conf_thres", 0.25);
-    this->declare_parameter("show_window", true);
+    this->declare_parameter("show_window", false);
 
     // 订阅状态指令话题
     state_sub_ = this->create_subscription<std_msgs::msg::UInt8>(
@@ -116,16 +119,15 @@ public:
                 pole_detector_->inputW(), pole_detector_->inputH());
 
     show_window_ = show_window;
-    t0_ = std::chrono::steady_clock::now();
 
     // 处理定时器 (~30 fps)
     timer_ = this->create_wall_timer(
         std::chrono::milliseconds(33),
         std::bind(&VisionDetectorNode::process_frame, this));
 
-    // 显示定时器 (~100 fps)
+    // 显示定时器 (~10 fps)
     display_timer_ = this->create_wall_timer(
-        std::chrono::milliseconds(10),
+        std::chrono::milliseconds(100),
         std::bind(&VisionDetectorNode::update_display, this));
 
     return true;
@@ -135,7 +137,9 @@ private:
   void update_display() {
     if (!show_window_ || display_frame_.empty())
       return;
-    cv::imshow("Weapon&&Pole Detection", display_frame_);
+    cv::Mat display;
+    cv::resize(display_frame_, display, {}, 0.5, 0.5);
+    cv::imshow("Weapon&&Pole Detection", display);
     if (cv::waitKey(1) == 27) {
       rclcpp::shutdown();
     }
@@ -144,7 +148,7 @@ private:
   void state_callback(const std_msgs::msg::UInt8::SharedPtr msg) {
     current_state_ = msg->data;
 
-    switch (current_state_) {
+    switch (msg->data) {
     case IDLE:
       RCLCPP_INFO(this->get_logger(), "收到指令 [IDLE]：待机，停止发送");
       break;
@@ -176,26 +180,48 @@ private:
   void process_frame() {
     cv::Mat frame;
 
+    if (grab_triggered_) {
+      RCLCPP_INFO(this->get_logger(), "GRAB 完成，关闭节点");
+      rclcpp::shutdown();
+    }
+
+    const auto state = current_state_.load();
+
     // IDLE 状态下不做检测、不发送
-    if (current_state_ == IDLE) {
+    if (state == IDLE) {
       frame = Cameras::getInstance().read(Cameras::weapon);
       if (frame.empty()) {
         RCLCPP_INFO(this->get_logger(), "获取图片失败");
         return;
       }
-      frame_count_++;
-      if (show_window_)
-        display_frame_ = frame.clone();
+      if (show_window_) {
+        std::lock_guard<std::mutex> lock{display_mtx_};
+        display_frame_ = frame;
+      }
       return;
     }
+
+    // 等待状态
+    if (state == WAITING) {
+      frame = Cameras::getInstance().read(Cameras::pole);
+      if (frame.empty()) {
+        RCLCPP_INFO(this->get_logger(), "获取图片失败");
+        return;
+      }
+      if (show_window_) {
+        std::lock_guard<std::mutex> lock{display_mtx_};
+        display_frame_ = frame;
+      }
+      return;
+    }
+
     // 武器检测
-    else if (current_state_ == WEAPON_TRACKING) {
+    if (state == WEAPON_TRACKING) {
       frame = Cameras::getInstance().read(Cameras::weapon);
       if (frame.empty()) {
         RCLCPP_INFO(this->get_logger(), "获取图片失败");
         return;
       }
-      frame_count_++;
 
       // 检测
       auto target = pipeline_->process(frame);
@@ -212,64 +238,33 @@ private:
 
       // 终端输出
       if (target.found) {
-        std::cout << "ITF: (" << target.itf_center.x << ", "
-                  << target.itf_center.y << ")"
-                  << "  dist=" << target.distance
-                  << "  score=" << target.itf_score << "  weapon=("
-                  << target.weapon_center.x << "," << target.weapon_center.y
-                  << ")\n";
+        RCLCPP_INFO(this->get_logger(),
+                    "ITF:(%d, %d), dist=%f, score=%f, weapon=(%d, %d)",
+                    target.itf_center.x, target.itf_center.y, target.distance,
+                    target.itf_score, target.weapon_center.x,
+                    target.weapon_center.y);
       } else if (target.weapon_center != cv::Point(0, 0)) {
-        std::cout << "无 ITF  weapon=(" << target.weapon_center.x << ","
-                  << target.weapon_center.y << ")\n";
+        RCLCPP_INFO(this->get_logger(), "无 ITF  weapon=(%d, %d)",
+                    target.weapon_center.x, target.weapon_center.y);
       }
 
       // 可视化
       if (show_window_) {
-        cv::Mat display = frame.clone();
+        cv::Mat display = frame;
         pipeline_->drawTarget(display, target);
-
-        auto t1 = std::chrono::steady_clock::now();
-        double elapsed = std::chrono::duration<double>(t1 - t0_).count();
-        if (elapsed >= 1.0) {
-          double fps = frame_count_ / elapsed;
-          cv::putText(display, cv::format("FPS: %.1f", fps), cv::Point(10, 30),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255),
-                      2);
-          // 状态显示
-          const char *state_str = current_state_ == IDLE ? "IDLE"
-                                  : current_state_ == WEAPON_TRACKING
-                                      ? "WEAPON_TRACKING"
-                                      : "WAITING";
-          cv::putText(display, cv::format("State: %s", state_str),
-                      cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                      cv::Scalar(0, 255, 0), 2);
-          frame_count_ = 0;
-          t0_ = t1;
-        }
-
-        display_frame_ = display.clone();
+        std::lock_guard<std::mutex> lock{display_mtx_};
+        display_frame_ = display;
       }
-    }
-    // 等待状态
-    else if (current_state_ == WAITING) {
-      frame = Cameras::getInstance().read(Cameras::pole);
-      if (frame.empty()) {
-        RCLCPP_INFO(this->get_logger(), "获取图片失败");
-        return;
-      }
-      frame_count_++;
-      if (show_window_)
-        display_frame_ = frame.clone();
       return;
     }
+
     // 长杆检测状态
-    else if (current_state_ == POLE_TRACKING) {
+    if (state == POLE_TRACKING) {
       frame = Cameras::getInstance().read(Cameras::pole);
       if (frame.empty()) {
         RCLCPP_INFO(this->get_logger(), "获取图片失败");
         return;
       }
-      frame_count_++;
 
       // 检测
       auto dets = pole_detector_->process(frame, conf_thres_);
@@ -281,28 +276,24 @@ private:
       if (best) {
         cv::Point img_center(frame.cols / 2, frame.rows / 2);
         pole_center = best->center();
-        distance = static_cast<float>(pole_center.x - img_center.x);
-      }
+        // 加负号是因为下位机只支持一种方向，杆子摄像头跟武器摄像头计算相反
+        distance = -static_cast<float>(pole_center.x - img_center.x);
 
-      // 发布距离到 ROS2 话题
-      if (best) {
+        // 发布距离到 ROS2 话题
         auto msg = std_msgs::msg::Int16();
         msg.data = static_cast<int16_t>(std::floor(distance));
         distance_pub_->publish(msg);
 
         // downlink 发送
         publish_packet(distance);
-      }
 
-      // 终端输出
-      if (best) {
-        std::cout << "pole=(" << pole_center.x << "," << pole_center.y << ")"
-                  << "  dist=" << distance << "  score=" << best->score << "\n";
+        RCLCPP_INFO(this->get_logger(), "pole=(%d, %d), dist=%f, score= %f",
+                    pole_center.x, pole_center.y, distance, best->score);
       }
 
       // 可视化
       if (show_window_) {
-        cv::Mat display = frame.clone();
+        cv::Mat display = frame;
 
         const cv::Point img_center(display.cols / 2, display.rows / 2);
 
@@ -325,35 +316,10 @@ private:
               cv::Point(img_center.x + 15, img_center.y - 15),
               cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 255), 2);
         }
-
-        // FPS
-        auto t1 = std::chrono::steady_clock::now();
-        double elapsed = std::chrono::duration<double>(t1 - t0_).count();
-        if (elapsed >= 1.0) {
-          double fps = frame_count_ / elapsed;
-          cv::putText(display, cv::format("FPS: %.1f", fps), cv::Point(10, 30),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255),
-                      2);
-
-          const char *state_str = current_state_ == IDLE ? "IDLE"
-                                  : current_state_ == POLE_TRACKING
-                                      ? "POLE_TRACKING"
-                                      : "GRAB";
-
-          cv::putText(display, cv::format("State: %s", state_str),
-                      cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.7,
-                      cv::Scalar(0, 255, 0), 2);
-          frame_count_ = 0;
-          t0_ = t1;
-        }
-
-        display_frame_ = display.clone();
+        std::lock_guard<std::mutex> lock{display_mtx_};
+        display_frame_ = display;
       }
-    }
-
-    if (grab_triggered_) {
-      RCLCPP_INFO(this->get_logger(), "GRAB 完成，关闭节点");
-      rclcpp::shutdown();
+      return;
     }
   }
 
@@ -372,7 +338,7 @@ private:
     const auto bits = static_cast<uint16_t>(number);
 
     r2_serial::msg::SerialPacket msg;
-    msg.code = weapon_pole_code_; //
+    msg.code = weapon_pole_code_v;
     msg.clear_pending = false;
     msg.payload.push_back(static_cast<uint8_t>(bits & 0xff));
     msg.payload.push_back(static_cast<uint8_t>((bits >> 8) & 0xff));
@@ -388,10 +354,7 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::TimerBase::SharedPtr display_timer_;
   std::atomic<uint8_t> current_state_;
-  bool grab_triggered_;
-
-  // 武器和长杆总结到同一个
-  static constexpr uint16_t weapon_pole_code_ = 0x0001;
+  std::atomic<bool> grab_triggered_;
 
   // 检测器
   std::unique_ptr<YoloOnnxDetector> pole_detector_;
@@ -401,8 +364,8 @@ private:
 
   // 摄像头与显示
   bool show_window_;
-  int frame_count_;
-  std::chrono::steady_clock::time_point t0_;
+
+  mutable std::mutex display_mtx_;
   cv::Mat display_frame_;
 };
 

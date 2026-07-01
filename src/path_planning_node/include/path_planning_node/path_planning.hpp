@@ -40,7 +40,8 @@ public:
     grab_higher_r2_kfs = 0x0318,
     grab_highest_r2_kfs = 0x0319,
     release_r2_kfs_and_grab_newer_r2_kfs = 0x031A,
-    complete_task = 0x031B
+    complete_task = 0x031B,
+    turn_around = 0x031C
   };
 
   template <typename T,
@@ -194,6 +195,9 @@ protected:
       case command::turn_right:
         turn_count -= 1;
         break;
+      case command::turn_around:
+        turn_count -= 2;
+        break;
       default:
         switch ((turn_count % 4 + 4) % 4) {
         case 0:
@@ -202,8 +206,7 @@ protected:
           optimized_commands.push(command::turn_left);
           break;
         case 2:
-          optimized_commands.push(command::turn_right);
-          optimized_commands.push(command::turn_right);
+          optimized_commands.push(command::turn_around);
           break;
         case 3:
           optimized_commands.push(command::turn_right);
@@ -539,18 +542,19 @@ protected:
       std::optional<point> down = get_dir_pos(direction::down);
       std::optional<point> right = get_dir_pos(direction::right);
 
-      auto gen_grab_command = [&]() {
+      auto gen_grab_command = [&](point give) {
+        map_level local_next_level{map[give.x][give.y]};
         if (current_level == map_level::ground) {
           commands.push(command::grab_higher_r2_kfs);
         } else if (current_level == map_level::low) {
-          if (next_level == map_level::medium ||
-              next_level == map_level::high) {
+          if (local_next_level == map_level::medium ||
+              local_next_level == map_level::high) {
             commands.push(command::grab_higher_r2_kfs);
           } else {
             commands.push(command::grab_lower_r2_kfs);
           }
         } else if (current_level == map_level::medium) {
-          if (next_level == map_level::high) {
+          if (local_next_level == map_level::high) {
             commands.push(command::grab_higher_r2_kfs);
           } else {
             commands.push(command::grab_lower_r2_kfs);
@@ -566,7 +570,7 @@ protected:
            (ext_r2kfs_count + r2kfs_must_be_grabed <
             max_r2kfs_can_be_grabed)) &&
           get_kfs(up.value()) == kfs_type::r2kfs) {
-        gen_grab_command();
+        gen_grab_command({up.value().x, up.value().y});
         local_map[up.value().x][up.value().y] = kfs_type::empty;
         if (must_be_walked_points.find(up.value()) ==
             must_be_walked_points.end()) {
@@ -580,7 +584,7 @@ protected:
             max_r2kfs_can_be_grabed)) &&
           get_kfs(left.value()) == kfs_type::r2kfs) {
         commands.push(command::turn_left);
-        gen_grab_command();
+        gen_grab_command({left.value().x, left.value().y});
         commands.push(command::turn_right);
         local_map[left.value().x][left.value().y] = kfs_type::empty;
         if (must_be_walked_points.find(left.value()) ==
@@ -595,7 +599,7 @@ protected:
             max_r2kfs_can_be_grabed)) &&
           get_kfs(right.value()) == kfs_type::r2kfs) {
         commands.push(command::turn_right);
-        gen_grab_command();
+        gen_grab_command({right.value().x, right.value().y});
         commands.push(command::turn_left);
         local_map[right.value().x][right.value().y] = kfs_type::empty;
         if (must_be_walked_points.find(right.value()) ==
@@ -609,11 +613,9 @@ protected:
            (ext_r2kfs_count + r2kfs_must_be_grabed <
             max_r2kfs_can_be_grabed)) &&
           get_kfs(down.value()) == kfs_type::r2kfs) {
-        commands.push(command::turn_right);
-        commands.push(command::turn_right);
-        gen_grab_command();
-        commands.push(command::turn_right);
-        commands.push(command::turn_right);
+        commands.push(command::turn_around);
+        gen_grab_command({down.value().x, down.value().y});
+        commands.push(command::turn_around);
         local_map[down.value().x][down.value().y] = kfs_type::empty;
         if (must_be_walked_points.find(down.value()) ==
             must_be_walked_points.end()) {
@@ -631,8 +633,7 @@ protected:
             commands.push(command::move_forward);
             current = {next_point, current_direction};
           } else {
-            commands.push(command::turn_right);
-            commands.push(command::turn_right);
+            commands.push(command::turn_around);
             commands.push(command::move_backward);
             current = {next_point, (current_direction - 2)};
           }
@@ -641,14 +642,12 @@ protected:
             commands.push(command::move_forward);
             current = {next_point, current_direction};
           } else {
-            commands.push(command::turn_right);
-            commands.push(command::turn_right);
+            commands.push(command::turn_around);
             commands.push(command::move_backward);
             current = {next_point, (current_direction - 2)};
           }
         } else if (current_level == map_level::high) {
-          commands.push(command::turn_right);
-          commands.push(command::turn_right);
+          commands.push(command::turn_around);
           commands.push(command::move_backward);
           current = {next_point, (current_direction - 2)};
         }
@@ -717,15 +716,13 @@ protected:
       } else {
         // 180 degree turn
         if (current_level == map_level::ground) {
-          commands.push(command::turn_right);
-          commands.push(command::turn_right);
+          commands.push(command::turn_around);
           commands.push(command::move_forward);
           current = {next_point, (current_direction - 2)};
         } else if (current_level == map_level::low) {
           if (next_level == map_level::medium ||
               next_level == map_level::high) {
-            commands.push(command::turn_right);
-            commands.push(command::turn_right);
+            commands.push(command::turn_around);
             commands.push(command::move_forward);
             current = {next_point, (current_direction - 2)};
           } else {
@@ -734,8 +731,7 @@ protected:
           }
         } else if (current_level == map_level::medium) {
           if (next_level == map_level::high) {
-            commands.push(command::turn_right);
-            commands.push(command::turn_right);
+            commands.push(command::turn_around);
             commands.push(command::move_forward);
             current = {next_point, (current_direction - 2)};
           } else {

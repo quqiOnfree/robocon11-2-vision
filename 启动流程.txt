@@ -1,0 +1,57 @@
+终端1：雷达驱动
+ros2 launch livox_ros_driver2 msg_MID360s_launch.py
+
+终端2：全场定位（QAQ要用不了了）
+ros2 launch fast_lio r2_localization.launch.py \
+  use_sim_time:=false \
+  rviz:=false \
+  map_path:=/home/robocon/robocon11-2-vision/src/fastlio_ws/MapPCD/R2_Field_Map_v3.pcd \
+  metrics_csv_path:=/tmp/r2_live.csv
+
+这个也行：
+#ros2 launch fast_lio mapping.launch.py
+
+-----------------------------------------------
+如果是重试区重定位：
+ros2 launch fast_lio r2_restart_localization.launch.py \
+  use_sim_time:=false \
+  rviz:=false \
+  map_path:=/home/robocon/robocon11-2-vision/src/fastlio_ws/MapPCD/R2_Field_Map_v3.pcd
+-----------------------------------------------
+
+
+终端3：数据下发节点
+
+ros2 launch r2_serial r2_data_downlink.launch.py \
+  serial_port:=/dev/ttyACM0 \
+  serial_debug_raw:=false
+
+终端4：雷达控制界面
+ros2 run fast_lio simple_odom --ros-args \
+  -p odom_topic:=/r2/global_odometry
+
+#ros2 run fast_lio simple_odom --ros-args \
+#-p odom_topic:=/Odometry
+ 
+ 终端5：视觉节点
+ros2 launch vision_detector robot_vision.launch.py \
+  weapon_camera:=2 \
+  pole_camera:=0
+
+终端6：路径规划节点
+ros2 run path_planning_node path_planning_node
+
+终端7：手输方块节点
+ros2 run hand_input_path hand_input_path_node 
+
+话题检查（开不开无所谓）
+
+source /opt/ros/humble/setup.bash
+source ~/robocon/lidar/livox_ws/install/setup.bash
+source ~/robocon/r2_serial_ws/install/setup.bash
+source ~/robocon/lidar/fastlio_ws/install/setup.bash
+source ~/robocon/vision_ws/install/setup.bash
+
+ros2 topic list | grep -E "livox|Odometry|r2|vision|downlink|uplink"
+
+ros2 topic list | grep -E "r2_serial|r2/downlink|r2/uplink|vision"
