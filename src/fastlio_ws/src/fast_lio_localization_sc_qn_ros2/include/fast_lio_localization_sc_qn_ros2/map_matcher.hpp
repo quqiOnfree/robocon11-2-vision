@@ -23,7 +23,7 @@ struct NanoGicpConfig {
   int max_iterations = 32;
   int ransac_iterations = 5;
   double max_correspondence_distance = 2.0;
-  double fitness_score_threshold = 10.0;
+  double fitness_score_threshold = 1.0;
   double transformation_epsilon = 0.01;
   double euclidean_fitness_epsilon = 0.01;
   double ransac_outlier_rejection_threshold = 1.0;

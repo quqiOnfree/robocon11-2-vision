@@ -24,6 +24,10 @@ fast_lio_localization_sc_qn:
       queue_size: 30
       max_stamp_diff_sec: 0.03
       qos_reliability: reliable
+    cold_start:
+      # 静止启动时等待前端稳定，并选择窗口内点数最丰富的一帧强制全局匹配。
+      accumulation_frames: 10
+      max_attempts: 3
     keyframe:
       distance_threshold: 1.0
       min_points: 80
@@ -41,7 +45,7 @@ fast_lio_localization_sc_qn:
       max_iterations: 32
       ransac_iterations: 5
       max_correspondence_distance: 2.0
-      fitness_score_threshold: 10.0
+      fitness_score_threshold: 1.0
       transformation_epsilon: 0.01
       euclidean_fitness_epsilon: 0.01
       ransac_outlier_rejection_threshold: 1.0

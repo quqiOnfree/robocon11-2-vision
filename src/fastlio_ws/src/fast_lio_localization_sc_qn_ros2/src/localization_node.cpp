@@ -71,6 +71,8 @@ private:
     declare_parameter<double>("sync.max_stamp_diff_sec", 0.03);
     declare_parameter<std::string>("sync.qos_reliability", "reliable");
     declare_parameter<double>("match.timer_hz", 1.0);
+    declare_parameter<int>("cold_start.accumulation_frames", 10);
+    declare_parameter<int>("cold_start.max_attempts", 3);
     declare_parameter<double>("keyframe.distance_threshold", 1.0);
     declare_parameter<int>("keyframe.min_points", 80);
 
@@ -85,7 +87,7 @@ private:
     declare_parameter<int>("nano_gicp.max_iterations", 32);
     declare_parameter<int>("nano_gicp.ransac_iterations", 5);
     declare_parameter<double>("nano_gicp.max_correspondence_distance", 2.0);
-    declare_parameter<double>("nano_gicp.fitness_score_threshold", 10.0);
+    declare_parameter<double>("nano_gicp.fitness_score_threshold", 1.0);
     declare_parameter<double>("nano_gicp.transformation_epsilon", 0.01);
     declare_parameter<double>("nano_gicp.euclidean_fitness_epsilon", 0.01);
     declare_parameter<double>("nano_gicp.ransac_outlier_rejection_threshold", 1.0);
@@ -122,6 +124,10 @@ private:
     get_parameter("sync.max_stamp_diff_sec", max_stamp_diff_sec_);
     get_parameter("sync.qos_reliability", sync_qos_reliability_);
     get_parameter("match.timer_hz", match_timer_hz_);
+    get_parameter("cold_start.accumulation_frames", cold_start_accumulation_frames_);
+    get_parameter("cold_start.max_attempts", cold_start_max_attempts_);
+    cold_start_accumulation_frames_ = std::max(1, cold_start_accumulation_frames_);
+    cold_start_max_attempts_ = std::max(1, cold_start_max_attempts_);
     get_parameter("keyframe.distance_threshold", keyframe_distance_threshold_);
     get_parameter("keyframe.min_points", min_keyframe_points_);
 
@@ -170,8 +176,10 @@ private:
     debug_coarse_pub_ = create_publisher<CloudMsg>(debug_coarse_topic_, 10);
     debug_final_pub_ = create_publisher<CloudMsg>(debug_final_topic_, 10);
     match_marker_pub_ = create_publisher<visualization_msgs::msg::Marker>(match_marker_topic_, 10);
-    localized_pub_ = create_publisher<std_msgs::msg::Bool>("/r2/localized", 10);
-    fitness_pub_ = create_publisher<std_msgs::msg::Float64>("/r2/fitness_score", 10);
+    localized_pub_ = create_publisher<std_msgs::msg::Bool>(
+        "/r2/localized", rclcpp::QoS(1).transient_local().reliable());
+    fitness_pub_ = create_publisher<std_msgs::msg::Float64>(
+        "/r2/fitness_score", rclcpp::QoS(1).transient_local().reliable());
 
     rclcpp::QoS qos(static_cast<size_t>(sync_queue_size_));
     if (sync_qos_reliability_ == "best_effort" || sync_qos_reliability_ == "sensor_data") {
@@ -289,52 +297,99 @@ private:
       return;
     }
 
-    current.pose_corrected = last_corrected_tf_ * current.pose_raw;
+    current_frame_ = current;
+    if (!is_localized_) {
+      accumulateColdStartFrame(current);
+      publishLocalized(false);
+      return;
+    }
+
+    // 首次全局对齐成功后，固定使用 map<-odom 修正每一帧 FAST-LIO 位姿。
+    current.pose_corrected = map_from_odom_ * current.pose_raw;
     current_frame_ = current;
     publishGlobalOdometry(current.pose_corrected, *odom_msg);
     publishCorrectedCloud(current);
 
-    if (!initialized_) {
-      std::lock_guard<std::mutex> lock(keyframe_mutex_);
+    std::lock_guard<std::mutex> lock(keyframe_mutex_);
+    if (isKeyframe(current, last_keyframe_)) {
+      current.index = current_keyframe_index_++;
+      current.processed = false;
       last_keyframe_ = current;
-      initialized_ = true;
-      ++current_keyframe_index_;
-      publishLocalized(false);
+    }
+  }
+
+  void accumulateColdStartFrame(const PoseCloud &current) {
+    std::lock_guard<std::mutex> lock(keyframe_mutex_);
+    if (cold_start_attempts_ >= cold_start_max_attempts_ ||
+        cold_start_waiting_for_match_) {
       return;
     }
 
-    std::lock_guard<std::mutex> lock(keyframe_mutex_);
-    if (isKeyframe(current, last_keyframe_)) {
-      last_keyframe_ = current;
-      ++current_keyframe_index_;
+    // Quatro 要求 scan-to-scan 点云规模相近。等待一个静态窗口稳定前端，
+    // 但不叠加重复扫描；选择窗口内点数最丰富的一帧作为冷启动查询。
+    if (cold_start_frame_count_ == 0 ||
+        current.cloud_local.size() > cold_start_accumulator_.cloud_local.size()) {
+      cold_start_accumulator_ = current;
     }
+    ++cold_start_frame_count_;
+
+    if (cold_start_frame_count_ < cold_start_accumulation_frames_) {
+      return;
+    }
+
+    cold_start_accumulator_.index = current_keyframe_index_++;
+    cold_start_accumulator_.processed = false;
+    cold_start_accumulator_.pose_corrected = cold_start_accumulator_.pose_raw;
+    pending_cold_start_match_ = cold_start_accumulator_;
+    cold_start_match_ready_ = true;
+    cold_start_waiting_for_match_ = true;
+    RCLCPP_INFO(get_logger(),
+                "Cold-start accumulation ready: attempt=%d/%d frames=%d points=%zu",
+                cold_start_attempts_ + 1, cold_start_max_attempts_,
+                cold_start_frame_count_, pending_cold_start_match_.cloud_local.size());
   }
 
   bool isKeyframe(const PoseCloud &frame, const PoseCloud &last) const {
     return keyframe_distance_threshold_ <
-           (last.pose_corrected.block<3, 1>(0, 3) - frame.pose_corrected.block<3, 1>(0, 3)).norm();
+           (last.pose_corrected.block<3, 1>(0, 3) -
+            frame.pose_corrected.block<3, 1>(0, 3)).norm();
   }
 
   void matchingTimerCallback() {
-    if (!initialized_) {
-      return;
-    }
-
     PoseCloud keyframe;
+    bool cold_start_match = false;
     {
       std::lock_guard<std::mutex> lock(keyframe_mutex_);
-      keyframe = last_keyframe_;
-      if (keyframe.index == 0 || keyframe.processed) {
-        return;
+      if (!is_localized_) {
+        if (!cold_start_match_ready_) {
+          return;
+        }
+        keyframe = pending_cold_start_match_;
+        cold_start_match_ready_ = false;
+        cold_start_match = true;
+      } else {
+        keyframe = last_keyframe_;
+        if (keyframe.processed) {
+          return;
+        }
+        last_keyframe_.processed = true;
       }
-      last_keyframe_.processed = true;
     }
 
+    runGlobalMatch(keyframe, cold_start_match);
+  }
+
+  void runGlobalMatch(PoseCloud keyframe, bool cold_start_match) {
     const int candidate = map_matcher_->fetchClosestKeyframeIndex(keyframe, map_keyframes_);
     if (candidate < 0) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-                           "No ScanContext map candidate for keyframe %d", keyframe.index);
+      RCLCPP_WARN(get_logger(),
+                  "%s: no ScanContext map candidate for keyframe %d",
+                  cold_start_match ? "Cold-start match rejected" : "Map match rejected",
+                  keyframe.index);
       publishLocalized(false);
+      if (cold_start_match) {
+        finishColdStartFailure();
+      }
       return;
     }
 
@@ -342,25 +397,68 @@ private:
     std_msgs::msg::Float64 score_msg;
     score_msg.data = result.score;
     fitness_pub_->publish(score_msg);
-
     publishDebugClouds(keyframe.stamp);
+
     if (!result.valid) {
       RCLCPP_WARN(get_logger(),
-                  "Map matching rejected: keyframe=%d candidate=%d converged=%d score=%.4f",
-                  keyframe.index, candidate, result.converged ? 1 : 0, result.score);
+                  "%s: keyframe=%d candidate=%d converged=%d score=%.4f threshold=%.4f",
+                  cold_start_match ? "Cold-start match rejected" : "Map match rejected",
+                  keyframe.index, candidate, result.converged ? 1 : 0, result.score,
+                  matcher_config_.gicp.fitness_score_threshold);
       publishLocalized(false);
+      if (cold_start_match) {
+        finishColdStartFailure();
+      }
       return;
     }
 
-    last_corrected_tf_ = result.transform * last_corrected_tf_;
-    const Eigen::Matrix4d corrected_keyframe_pose = result.transform * keyframe.pose_corrected;
-    publishGlobalOdometry(corrected_keyframe_pose, keyframe.stamp);
+    // result.transform 把当前修正系中的查询点云变换到 map；与已有 map<-odom 左乘组合。
+    map_from_odom_ = result.transform * map_from_odom_;
+    keyframe.pose_corrected = map_from_odom_ * keyframe.pose_raw;
+    keyframe.processed = true;
+    {
+      std::lock_guard<std::mutex> lock(keyframe_mutex_);
+      last_keyframe_ = keyframe;
+      is_localized_ = true;
+      resetColdStartAccumulatorLocked();
+    }
+
+    publishGlobalOdometry(keyframe.pose_corrected, keyframe.stamp);
     publishLocalized(true);
-    publishMatchMarker(corrected_keyframe_pose, keyframe.pose_raw, keyframe.stamp);
+    publishMatchMarker(keyframe.pose_corrected, keyframe.pose_raw, keyframe.stamp);
 
     RCLCPP_INFO(get_logger(),
-                "Map matching accepted: keyframe=%d candidate=%d score=%.4f",
+                "%s: keyframe=%d candidate=%d score=%.4f; map<-odom locked",
+                cold_start_match ? "Cold-start match accepted" : "Map match accepted",
                 keyframe.index, candidate, result.score);
+  }
+
+  void finishColdStartFailure() {
+    int attempts = 0;
+    {
+      std::lock_guard<std::mutex> lock(keyframe_mutex_);
+      ++cold_start_attempts_;
+      attempts = cold_start_attempts_;
+      resetColdStartAccumulatorLocked();
+    }
+
+    if (attempts >= cold_start_max_attempts_) {
+      RCLCPP_ERROR(get_logger(),
+                   "Cold-start localization failed after %d attempts; no global odometry will be published",
+                   attempts);
+    } else {
+      RCLCPP_WARN(get_logger(),
+                  "Cold-start localization will retry with a fresh %d-frame accumulation window (%d/%d)",
+                  cold_start_accumulation_frames_, attempts, cold_start_max_attempts_);
+    }
+  }
+
+  void resetColdStartAccumulatorLocked() {
+    cold_start_accumulator_ = PoseCloud{};
+    pending_cold_start_match_ = PoseCloud{};
+    cold_start_frame_count_ = 0;
+    cold_start_match_ready_ = false;
+    cold_start_waiting_for_match_ = false;
   }
 
   void publishGlobalOdometry(const Eigen::Matrix4d &pose, const OdomMsg &source_odom) {
@@ -452,6 +550,8 @@ private:
   double max_stamp_diff_sec_ = 0.03;
   std::string sync_qos_reliability_ = "reliable";
   double match_timer_hz_ = 1.0;
+  int cold_start_accumulation_frames_ = 10;
+  int cold_start_max_attempts_ = 3;
   double keyframe_distance_threshold_ = 1.0;
   int min_keyframe_points_ = 80;
 
@@ -460,11 +560,17 @@ private:
   std::vector<MapKeyframe> map_keyframes_;
   Cloud saved_map_cloud_;
 
-  bool initialized_ = false;
+  bool is_localized_ = false;
   int current_keyframe_index_ = 0;
-  Eigen::Matrix4d last_corrected_tf_ = Eigen::Matrix4d::Identity();
+  Eigen::Matrix4d map_from_odom_ = Eigen::Matrix4d::Identity();
   PoseCloud last_keyframe_;
   PoseCloud current_frame_;
+  PoseCloud cold_start_accumulator_;
+  PoseCloud pending_cold_start_match_;
+  int cold_start_frame_count_ = 0;
+  int cold_start_attempts_ = 0;
+  bool cold_start_match_ready_ = false;
+  bool cold_start_waiting_for_match_ = false;
   std::mutex keyframe_mutex_;
 
   message_filters::Subscriber<OdomMsg> odom_sub_;

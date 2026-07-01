@@ -35,7 +35,14 @@ void MapMatcher::addMapScanContext(const Cloud &cloud) {
 
 int MapMatcher::fetchClosestKeyframeIndex(const PoseCloud &query,
                                           const std::vector<MapKeyframe> &map_keyframes) {
-  const auto candidate = scan_context_.detectLoopClosureIDGivenScan(query.cloud_local);
+  // 预制地图与实时扫描属于两个独立 session，必须搜索全部地图描述子。
+  // detectLoopClosureIDGivenScan() 是在线闭环接口，会排除最近 30 帧，短地图会永远无候选。
+  Eigen::MatrixXd query_descriptor = scan_context_.makeScancontext(query.cloud_local);
+  Eigen::MatrixXd query_ring_key =
+      scan_context_.makeRingkeyFromScancontext(query_descriptor);
+  std::vector<float> query_ring_key_vector = eig2stdvec(query_ring_key);
+  const auto candidate = scan_context_.detectLoopClosureIDBetweenSession(
+      query_ring_key_vector, query_descriptor);
   const int candidate_index = candidate.first;
   if (candidate_index < 0 || candidate_index >= static_cast<int>(map_keyframes.size())) {
     return -1;
