@@ -619,13 +619,13 @@ private:
       return;
     }
     std_msgs::msg::UInt16 msg;
-    std::uint16_t data{};
-    data |= packet.body_data()[0];
-    data |= (packet.body_data()[1] << 8) & 0xFF;
+    const std::uint16_t data =
+        static_cast<std::uint16_t>(packet.body_data()[0]) |
+        (static_cast<std::uint16_t>(packet.body_data()[1]) << 8);
     msg.data = data;
     path_request_new_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s, index=%d",
-                packet.code(), path_request_topic_.c_str(), static_cast<int>(msg.data));
+                packet.code(), path_request_new_topic_.c_str(), static_cast<int>(msg.data));
   }
 
   void publishVisionStateCommand(const packet_t &packet) {

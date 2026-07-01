@@ -83,7 +83,7 @@ public:
         odom_topic_, 10,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
     localized_sub_ = create_subscription<std_msgs::msg::Bool>(
-        localized_topic_, 10,
+        localized_topic_, rclcpp::QoS(1).transient_local().reliable(),
         [this](const std_msgs::msg::Bool::SharedPtr msg) {
           if (msg->data) {
             localization_confirmed_.store(true);
