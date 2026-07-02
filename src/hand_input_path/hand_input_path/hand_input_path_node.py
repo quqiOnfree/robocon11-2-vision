@@ -247,8 +247,7 @@ class MainWindow(QMainWindow):
     def create_lidar_panel(self):
         self.left_dock = QDockWidget("lidar panel", self)
         widget = QWidget(self)
-        layout = QVBoxLayout(self)
-        widget.setLayout(layout)
+        layout = QVBoxLayout(widget)
         
         self.lidar_pos_label = QLabel("lidar position: (null, null, null)", widget)
         layout.addWidget(self.lidar_pos_label)
@@ -376,7 +375,10 @@ class Ros2Node(Node):
             print("Failed to decode path command:", msg.data)
 
     def scene_received(self, msg: Int8):
-        code = msg.data
+        code = int(msg.data)
+        if code not in (0, 1):
+            self.get_logger().warn(f"Unknown match zone: {code}")
+            return
         self.path_signal.scene_signal.emit(code)
 
     def serial_received(self, msg: serial_packet.SerialPacket):
@@ -385,9 +387,9 @@ class Ros2Node(Node):
         if len(msg.payload) != 6:
             self.get_logger().warn("error format of serial packet")
             return
-        x_mm = msg.payload[0] | (msg.payload[1] << 8) - 32768
-        y_mm = msg.payload[2] | (msg.payload[3] << 8) - 32768
-        yaw_deg = msg.payload[4] | (msg.payload[5] << 8) - 32768
+        x_mm = (msg.payload[0] | (msg.payload[1] << 8)) - 32768
+        y_mm = (msg.payload[2] | (msg.payload[3] << 8)) - 32768
+        yaw_deg = (msg.payload[4] | (msg.payload[5] << 8)) - 32768
         self.path_signal.lidar_position_signal.emit(x_mm, y_mm, yaw_deg)
 
 def main():

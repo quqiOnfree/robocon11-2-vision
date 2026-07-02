@@ -26,9 +26,9 @@ inline constexpr std::array<
 inline static std::array<std::array<path_planning::kfs_type, path_planning::map_height>, path_planning::map_width> kfs_map{};
 
 int main () {
-    kfs_map[2][1] = 
-    kfs_map[2][2] = 
-    kfs_map[2][3] =
+    kfs_map[2][1] = path_planning::kfs_type::r2kfs;
+    kfs_map[2][2] = path_planning::kfs_type::r2kfs;
+    kfs_map[2][3] = path_planning::kfs_type::r2kfs;
     kfs_map[2][4] = path_planning::kfs_type::r2kfs;
     kfs_map[1][2] = path_planning::kfs_type::falsekfs;
 
