@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, Slot, QObject, QTimer
+from PySide6.QtCore import Qt, Signal, Slot, QObject, QTimer, QPoint
 from PySide6.QtWidgets import (
     QMainWindow,
     QVBoxLayout,
@@ -11,12 +11,11 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QDockWidget,
     QButtonGroup,
-    QComboBox,
     QStyleOptionGraphicsItem,
     QApplication,
     QMessageBox,
 )
-from PySide6.QtGui import QPainter, QColor, QFont
+from PySide6.QtGui import QPainter, QColor, QFont, QPen
 import sys
 import json
 from enum import Enum
@@ -126,6 +125,13 @@ class BlockItem(QGraphicsRectItem):
             painter.setPen(types[3][3])  # white
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "False_KFS")
 
+        if self.isSelected():
+            painter.setPen(QPen(QColor("red"), 5))
+            painter.setBrush(QColor("red"))
+            bounding = self.boundingRect()
+            painter.drawPolyline([bounding.topLeft(), bounding.topRight(),
+                                  bounding.bottomRight(), bounding.bottomLeft(),
+                                  bounding.topLeft()])
 
 class MainWindow(QMainWindow):
     emit_grid = Signal(dict)
@@ -173,11 +179,25 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QGridLayout(widget)
 
-        scene_combo = QComboBox()
-        scene_combo.addItems(["蓝色场景", "红色场景"])
-        scene_combo.currentIndexChanged.connect(self.change_scene)
-        scene_combo.setFixedSize(100, 100)
-        layout.addWidget(scene_combo, 0, 0)
+        # scene_combo = QComboBox()
+        # scene_combo.addItems(["蓝色场景", "红色场景"])
+        # scene_combo.currentIndexChanged.connect(self.change_scene)
+        # scene_combo.setFixedSize(100, 100)
+        # layout.addWidget(scene_combo, 0, 0)
+
+        select_blue_scene = QPushButton(self)
+        select_blue_scene.setText("蓝色场景")
+        select_blue_scene.setStyleSheet(f"background-color: {QColor('lightblue').name()};")
+        select_blue_scene.clicked.connect(lambda: self.change_scene(0))
+        select_blue_scene.setFixedSize(100, 100)
+        layout.addWidget(select_blue_scene, 0, 0)
+
+        select_red_scene = QPushButton(self)
+        select_red_scene.setText("红色场景")
+        select_red_scene.setStyleSheet(f"background-color: {QColor('lightcoral').name()};")
+        select_red_scene.clicked.connect(lambda: self.change_scene(1))
+        select_red_scene.setFixedSize(100, 100)
+        layout.addWidget(select_red_scene, 0, 1)
 
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
