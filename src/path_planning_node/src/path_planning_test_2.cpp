@@ -26,8 +26,11 @@ inline constexpr std::array<
 inline static std::array<std::array<path_planning::kfs_type, path_planning::map_height>, path_planning::map_width> kfs_map{};
 
 int main () {
-    kfs_map[1][2] = path_planning::kfs_type::r2kfs;
-    kfs_map[1][3] = path_planning::kfs_type::r2kfs;
+    kfs_map[2][1] = 
+    kfs_map[2][2] = 
+    kfs_map[2][3] =
+    kfs_map[2][4] = path_planning::kfs_type::r2kfs;
+    kfs_map[1][2] = path_planning::kfs_type::falsekfs;
 
     path_planning planning;
     auto [commands, path] = planning.generate_commands(kfs_map, level_map);
@@ -62,6 +65,9 @@ int main () {
         break;
       case path_planning::command::turn_around:
         std::cout << "Turn Around\n";
+        break;
+      case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
+        std::cout << "Release to grab newer R2 KFS\n";
         break;
       default:
         std::cout << "Unknown Command\n";

@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QStyleOptionGraphicsItem,
     QApplication,
     QMessageBox,
+    QLabel
 )
 from PySide6.QtGui import QPainter, QColor, QFont, QPen
 import sys
@@ -22,7 +23,7 @@ from enum import Enum
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Int8
-
+import r2_serial.msg._serial_packet as serial_packet
 
 class BlockLevel(Enum):
     Ground = 0
@@ -156,6 +157,8 @@ class MainWindow(QMainWindow):
         self.scene_index = 1
 
         self.create_side_panel()
+        self.create_lidar_panel()
+        self.create_menu()
         self.change_scene(0)  # 默认加载蓝色场景
 
     def create_grid(self, grid: list[list[BlockLevel]]):
@@ -176,9 +179,9 @@ class MainWindow(QMainWindow):
         self.create_grid(grid)
 
     def create_side_panel(self):
-        # 右侧 Dock 窗口
-        dock = QDockWidget("方块类型", self)
-        widget = QWidget()
+        # 右侧 self.right_dock 窗口
+        self.right_dock = QDockWidget("方块类型", self)
+        widget = QWidget(self)
         layout = QGridLayout(widget)
 
         # scene_combo = QComboBox()
@@ -238,8 +241,30 @@ class MainWindow(QMainWindow):
         clear_btn.setFixedSize(100, 100)
         layout.addWidget(clear_btn)
 
-        dock.setWidget(widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
+        self.right_dock.setWidget(widget)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.right_dock)
+
+    def create_lidar_panel(self):
+        self.left_dock = QDockWidget("lidar panel", self)
+        widget = QWidget(self)
+        layout = QVBoxLayout(self)
+        widget.setLayout(layout)
+        
+        self.lidar_pos_label = QLabel("lidar position: (null, null, null)", widget)
+        layout.addWidget(self.lidar_pos_label)
+
+        self.left_dock.setWidget(widget)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.left_dock)
+        self.left_dock.setVisible(False)
+
+    def create_menu(self):
+        self.toolbar = self.addToolBar("toolbar")
+
+        self.lidar_panel = self.toolbar.addAction("lidar panel")
+        self.lidar_panel.triggered.connect(lambda: self.left_dock.setVisible(True))
+        
+        self.grid_panel = self.toolbar.addAction("grid_panel")
+        self.grid_panel.triggered.connect(lambda: self.right_dock.setVisible(True))
 
     def get_kfs_type(self) -> list[list[BlockType]]:
         return [[item.block_type for item in row] for row in self.grid_items]
@@ -267,6 +292,10 @@ class MainWindow(QMainWindow):
             for col in range(len(self.grid_items[row])):
                 is_path = [row, col + 1] in path_data
                 self.grid_items[row][col].update_path_status(is_path)
+
+    @Slot(int, int, int)
+    def update_lidar_position(self, x_mm: int, y_mm: int, yaw_degree: int):
+        self.lidar_pos_label.setText(f"lidar position: ({x_mm}, {y_mm}, {yaw_degree})")
 
     # ---------- 核心逻辑：把选中的方块设为指定类型 ----------
     def set_selected_type(self, new_type: BlockType):
@@ -313,6 +342,7 @@ class MainWindow(QMainWindow):
 class PathSignalEmitter(QObject):
     path_signal = Signal(list)
     scene_signal = Signal(int)
+    lidar_position_signal = Signal(int, int, int)
 
 class Ros2Node(Node):
     def __init__(self):
@@ -322,6 +352,8 @@ class Ros2Node(Node):
         self.grid_publisher = self.create_publisher(String, "grid_data", 10)
         self.scene_subcription = self.create_subscription(Int8, "/r2/match_zone", self.scene_received, 10)
         self.subscriber = self.create_subscription(String, "path_commands", self.path_received, 10)
+        self.serial_subscriber = self.create_subscription(serial_packet.SerialPacket,
+                                                          "/r2_serial/downlink/packet", self.serial_received, 10)
 
     @Slot(dict)
     def publish_grid(self, grid: dict):
@@ -347,6 +379,17 @@ class Ros2Node(Node):
         code = msg.data
         self.path_signal.scene_signal.emit(code)
 
+    def serial_received(self, msg: serial_packet.SerialPacket):
+        if msg.code != 0x0101:
+            return
+        if len(msg.payload) != 6:
+            self.get_logger().warn("error format of serial packet")
+            return
+        x_mm = msg.payload[0] | (msg.payload[1] << 8) - 32768
+        y_mm = msg.payload[2] | (msg.payload[3] << 8) - 32768
+        yaw_deg = msg.payload[4] | (msg.payload[5] << 8) - 32768
+        self.path_signal.lidar_position_signal.emit(x_mm, y_mm, yaw_deg)
+
 def main():
     rclpy.init()
     app = QApplication(sys.argv)
@@ -355,6 +398,7 @@ def main():
     window.emit_grid.connect(node.publish_grid)
     node.path_signal.path_signal.connect(window.update_path)
     node.path_signal.scene_signal.connect(window.change_scene)
+    node.path_signal.lidar_position_signal.connect(window.update_lidar_position)
     window.show()
     timer = QTimer()
     timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0.01))
