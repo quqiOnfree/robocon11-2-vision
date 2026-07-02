@@ -21,7 +21,7 @@ def generate_launch_description():
         'serial_port': '/dev/ttyACM0',
         'serial_debug_raw': 'false',
         'debug_print_pose_tx': 'false',
-        'write_rate_limit_enabled': 'true',
+        'write_rate_limit_enabled': 'false',
         'write_min_interval_ms': '10',
         'debug_drop_summary_every_n': '50',
         'reconnect_enabled': 'true',

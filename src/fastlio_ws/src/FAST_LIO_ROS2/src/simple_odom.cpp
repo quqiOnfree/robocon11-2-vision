@@ -177,6 +177,18 @@ private:
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
 
+    // 雷达恢复倾斜安装后，按历史实车标定值补偿升降引起的水平位移。
+    height_compensation_enabled_ = declare_parameter<bool>(
+        "height_compensation.enabled", true);
+    height_compensation_x_per_z_ = declare_parameter<double>(
+        "height_compensation.x_per_z", -0.52);
+    height_compensation_y_per_z_ = declare_parameter<double>(
+        "height_compensation.y_per_z", 0.0);
+    height_compensation_use_initial_z_ = declare_parameter<bool>(
+        "height_compensation.use_initial_z_as_reference", true);
+    height_compensation_reference_z_ = declare_parameter<double>(
+        "height_compensation.reference_z", 0.0);
+
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
     if (!deprecated_serial_port.empty()) {
@@ -210,6 +222,12 @@ private:
                                                     "initial_target_point");
     }
     fallback_average_seconds_ = std::max(0.5, fallback_average_seconds_);
+    if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_) ||
+        !std::isfinite(height_compensation_x_per_z_) ||
+        !std::isfinite(height_compensation_y_per_z_) ||
+        !std::isfinite(height_compensation_reference_z_)) {
+      throw std::invalid_argument("车体外参与高度补偿参数必须是有限数值");
+    }
     if (mode_ == Mode::kFallback && configured_zone_ == Zone::kUnlocked) {
       throw std::invalid_argument("fallback 模式必须显式传入 zone:=blue 或 zone:=red");
     }
@@ -493,9 +511,15 @@ private:
     std::ostringstream out;
     out << "\n================ [R2 位姿上报状态] ================\n";
     out << "运行模式     : " << modeName(mode_) << " | 赛制: " << gameName(game_) << "\n";
-    out << "原始车体坐标 : X: " << current_x_.load()
+    out << "修正后车体坐标: X: " << current_x_.load()
         << " mm | Y: " << current_y_.load()
+        << " mm | Z: " << current_z_.load()
         << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
+    if (height_compensation_enabled_) {
+      out << "高度补偿状态 : ref_z=" << height_compensation_reference_z_mm_.load()
+          << " mm | dx=" << height_compensation_dx_mm_.load()
+          << " mm | dy=" << height_compensation_dy_mm_.load() << " mm\n";
+    }
     out << "定位有效状态 : "
         << (localization_confirmed_.load() ? "有效" : "无效/等待重定位") << "\n";
     out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
@@ -555,8 +579,27 @@ private:
   }
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    const double lidar_x = msg->pose.pose.position.x;
-    const double lidar_y = msg->pose.pose.position.y;
+    const double lidar_z = msg->pose.pose.position.z;
+    double lidar_x = msg->pose.pose.position.x;
+    double lidar_y = msg->pose.pose.position.y;
+
+    if (height_compensation_enabled_) {
+      if (height_compensation_use_initial_z_ &&
+          !height_reference_initialized_.exchange(true)) {
+        height_compensation_reference_z_ = lidar_z;
+      }
+      const double dz = lidar_z - height_compensation_reference_z_;
+      const double dx = dz * height_compensation_x_per_z_;
+      const double dy = dz * height_compensation_y_per_z_;
+      lidar_x -= dx;
+      lidar_y -= dy;
+      height_compensation_reference_z_mm_.store(
+          static_cast<std::int16_t>(std::lround(height_compensation_reference_z_ * 1000.0)));
+      height_compensation_dx_mm_.store(
+          static_cast<std::int16_t>(std::lround(dx * 1000.0)));
+      height_compensation_dy_mm_.store(
+          static_cast<std::int16_t>(std::lround(dy * 1000.0)));
+    }
     const tf2::Quaternion q(
         msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
         msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
@@ -577,6 +620,10 @@ private:
 
     current_x_.store(*x_mm);
     current_y_.store(*y_mm);
+    const auto z_mm = checkedInt16(lidar_z * 1000.0, "位置 Z");
+    if (z_mm) {
+      current_z_.store(*z_mm);
+    }
     current_yaw_deg_.store(*yaw_deg);
     have_pose_.store(true);
     processAverage(raw_x_mm, raw_y_mm, yaw);
@@ -599,13 +646,10 @@ private:
       physical_y_mm += runtime_offset_y_mm_.load();
     }
 
-    double output_x_mm = physical_x_mm;
-    double output_y_mm = physical_y_mm;
-    double output_yaw = yaw * 180.0 / M_PI;
-    if (zone_.load() == Zone::kRed) {
-      output_y_mm = 2.0 * mirror_center_y_ - physical_y_mm;
-      output_yaw = -output_yaw;
-    }
+    // 半区只用于策略通知与锚点选择，不再修改实际下发的雷达位姿。
+    const double output_x_mm = physical_x_mm;
+    const double output_y_mm = physical_y_mm;
+    const double output_yaw = yaw * 180.0 / M_PI;
 
     const auto mapped_x = checkedInt16(output_x_mm, "映射位置 X");
     const auto mapped_y = checkedInt16(output_y_mm, "映射位置 Y");
@@ -629,6 +673,15 @@ private:
                 blue_normal_.x, blue_normal_.y, blue_challenge_.x,
                 blue_challenge_.y, blue_retry_.x, blue_retry_.y,
                 mirror_center_y_);
+    RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
+                base_offset_x_, base_offset_y_);
+    if (height_compensation_enabled_) {
+      RCLCPP_INFO(get_logger(),
+                  "高度补偿已启用: x_per_z=%.3f y_per_z=%.3f reference=%s%.3f m",
+                  height_compensation_x_per_z_, height_compensation_y_per_z_,
+                  height_compensation_use_initial_z_ ? "initial_z=" : "fixed_z=",
+                  height_compensation_reference_z_);
+    }
     std::printf("\n============================================================\n");
     std::printf(" R2 位姿上报节点已启动：q / r1 / r2\n");
     std::printf("============================================================\n> ");
@@ -658,6 +711,12 @@ private:
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
+  bool height_compensation_enabled_{true};
+  bool height_compensation_use_initial_z_{true};
+  double height_compensation_x_per_z_{-0.52};
+  double height_compensation_y_per_z_{0.0};
+  double height_compensation_reference_z_{0.0};
+  std::atomic<bool> height_reference_initialized_{false};
 
   double fallback_average_seconds_{5.0};
   std::atomic<bool> fallback_calibrated_{false};
@@ -691,7 +750,11 @@ private:
 
   std::atomic<std::int16_t> current_x_{0};
   std::atomic<std::int16_t> current_y_{0};
+  std::atomic<std::int16_t> current_z_{0};
   std::atomic<std::int16_t> current_yaw_deg_{0};
+  std::atomic<std::int16_t> height_compensation_reference_z_mm_{0};
+  std::atomic<std::int16_t> height_compensation_dx_mm_{0};
+  std::atomic<std::int16_t> height_compensation_dy_mm_{0};
   std::atomic<std::int16_t> output_x_{0};
   std::atomic<std::int16_t> output_y_{0};
   std::atomic<std::int16_t> output_yaw_deg_{0};

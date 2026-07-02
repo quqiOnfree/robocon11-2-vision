@@ -115,7 +115,7 @@ private:
     // 所有话题都做成参数，后续联调时可以 launch 覆盖，不需要改源码。
     serial_port_ = declare_parameter<std::string>("serial_port", "/dev/ttyACM0");
     serial_debug_raw_ = declare_parameter<bool>("serial_debug_raw", false);
-    write_rate_limit_enabled_ = declare_parameter<bool>("write_rate_limit.enabled", true);
+    write_rate_limit_enabled_ = declare_parameter<bool>("write_rate_limit.enabled", false);
     write_min_interval_ms_ = declare_parameter<int>("write_rate_limit.min_interval_ms", 10);
     debug_print_pose_tx_ = declare_parameter<bool>("debug.print_pose_tx", false);
     debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 20000);
@@ -339,7 +339,7 @@ private:
         std::chrono::milliseconds(interval_ms),
         [this]() { sendMatchZone(); });
     RCLCPP_INFO(get_logger(),
-                "比赛半区 0x0000 持续下发: topic=%s interval=%d ms",
+                "比赛半区 0x0000 确认前周期下发: topic=%s interval=%d ms",
                 match_zone_topic_.c_str(), interval_ms);
   }
 
@@ -763,7 +763,7 @@ private:
 
   std::string serial_port_;
   bool serial_debug_raw_{false};
-  bool write_rate_limit_enabled_{true};
+  bool write_rate_limit_enabled_{false};
   int write_min_interval_ms_{10};
   bool debug_print_pose_tx_{false};
   int debug_pose_tx_summary_ms_{20000};
