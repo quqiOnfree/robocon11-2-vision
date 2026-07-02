@@ -20,6 +20,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float64.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <visualization_msgs/msg/marker.hpp>
 
 #include <pcl/io/pcd_io.h>
@@ -182,7 +183,8 @@ private:
         "/r2/fitness_score", rclcpp::QoS(1).transient_local().reliable());
 
     rclcpp::QoS qos(static_cast<size_t>(sync_queue_size_));
-    if (sync_qos_reliability_ == "best_effort" || sync_qos_reliability_ == "sensor_data") {
+    if (sync_qos_reliability_ == "best_effort" ||
+        sync_qos_reliability_ == "sensor_data") {
       qos.best_effort();
     } else {
       qos.reliable();
@@ -190,10 +192,12 @@ private:
     qos.durability_volatile();
     odom_sub_.subscribe(this, odom_topic_, qos.get_rmw_qos_profile());
     cloud_sub_.subscribe(this, cloud_topic_, qos.get_rmw_qos_profile());
-    sync_ = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
-        SyncPolicy(static_cast<uint32_t>(sync_queue_size_)), odom_sub_, cloud_sub_);
-    sync_->registerCallback(std::bind(&FastLioLocalizationScQnNode::odomCloudCallback,
-                                      this, std::placeholders::_1, std::placeholders::_2));
+    setupSynchronizer();
+
+    relocalization_service_ = create_service<std_srvs::srv::Trigger>(
+        "/r2/trigger_relocalization",
+        std::bind(&FastLioLocalizationScQnNode::handleRelocalizationRequest,
+                  this, std::placeholders::_1, std::placeholders::_2));
 
     const double hz = std::max(0.1, match_timer_hz_);
     match_timer_ = create_wall_timer(
@@ -201,6 +205,40 @@ private:
         std::bind(&FastLioLocalizationScQnNode::matchingTimerCallback, this));
 
     publishSavedMap();
+  }
+
+  void setupSynchronizer() {
+    sync_.reset();
+    sync_ = std::make_shared<message_filters::Synchronizer<SyncPolicy>>(
+        SyncPolicy(static_cast<uint32_t>(sync_queue_size_)), odom_sub_, cloud_sub_);
+    sync_->registerCallback(std::bind(
+        &FastLioLocalizationScQnNode::odomCloudCallback, this,
+        std::placeholders::_1, std::placeholders::_2));
+  }
+
+  void handleRelocalizationRequest(
+      const std::shared_ptr<std_srvs::srv::Trigger::Request> /*request*/,
+      std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
+    {
+      std::lock_guard<std::mutex> lock(keyframe_mutex_);
+      is_localized_ = false;
+      map_from_odom_ = Eigen::Matrix4d::Identity();
+      last_keyframe_ = PoseCloud{};
+      current_frame_ = PoseCloud{};
+      current_keyframe_index_ = 0;
+      cold_start_attempts_ = 0;
+      resetColdStartAccumulatorLocked();
+    }
+
+    // 重建同步器会丢弃 ApproximateTime 中尚未配对的历史消息，
+    // 后续只使用服务调用之后的新点云和新里程计执行冷启动。
+    setupSynchronizer();
+    publishLocalized(false);
+    response->success = true;
+    response->message =
+        "relocalization reset accepted; collecting a fresh cold-start window";
+    RCLCPP_WARN(get_logger(),
+                "Relocalization triggered: state and synchronized frame cache cleared");
   }
 
   static std::vector<std::string> splitCsvLine(const std::string &line) {
@@ -577,6 +615,7 @@ private:
   message_filters::Subscriber<CloudMsg> cloud_sub_;
   std::shared_ptr<message_filters::Synchronizer<SyncPolicy>> sync_;
   rclcpp::TimerBase::SharedPtr match_timer_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr relocalization_service_;
 
   rclcpp::Publisher<OdomMsg>::SharedPtr global_odom_pub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr current_pose_pub_;

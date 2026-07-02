@@ -283,6 +283,38 @@ public:
       }
       if (std::distance(packet_start, m_receive_buffer.end()) <
           static_cast<std::ptrdiff_t>(size)) {
+        // 长度字段可能被线路噪声破坏。若缓存后方已有 CRC 完整的新包，
+        // 直接跳到新帧，避免一直等待虚假的超长数据。
+        bool found_later_packet = false;
+        for (auto candidate = packet_start + 1;
+             candidate != m_receive_buffer.end(); ++candidate) {
+          if (*candidate != ((packet_t::header >> 8) & 0xFF) ||
+              candidate + 1 == m_receive_buffer.end() ||
+              *(candidate + 1) != (packet_t::header & 0xFF)) {
+            continue;
+          }
+          if (std::distance(candidate, m_receive_buffer.end()) <
+              static_cast<std::ptrdiff_t>(packet_t::header_size)) {
+            break;
+          }
+          const uint16_t candidate_size =
+              *(candidate + 2) << 8 | *(candidate + 3);
+          if (candidate_size < packet_t::header_size + packet_t::tail_size ||
+              std::distance(candidate, m_receive_buffer.end()) <
+                  static_cast<std::ptrdiff_t>(candidate_size)) {
+            continue;
+          }
+          packet_t candidate_packet{candidate, candidate + candidate_size,
+                                    from_whole_packet};
+          if (candidate_packet) {
+            m_receive_buffer.erase(m_receive_buffer.begin(), candidate);
+            found_later_packet = true;
+            break;
+          }
+        }
+        if (found_later_packet) {
+          continue;
+        }
         return; // Not enough data for whole packet, wait for more data
       }
       packet_t packet{packet_start, packet_start + size, from_whole_packet};
@@ -290,10 +322,13 @@ public:
         if (m_receive_function) {
           m_receive_function(std::move(packet));
         }
+        m_receive_buffer.erase(
+            m_receive_buffer.begin(),
+            packet_start + size); // Remove processed packet from buffer
+      } else {
+        // CRC 或帧尾错误时只丢弃首字节，防止吞掉后续有效帧。
+        m_receive_buffer.erase(m_receive_buffer.begin(), packet_start + 1);
       }
-      m_receive_buffer.erase(m_receive_buffer.begin(),
-                             packet_start +
-                                 size); // Remove processed packet from buffer
     }
   }
 
