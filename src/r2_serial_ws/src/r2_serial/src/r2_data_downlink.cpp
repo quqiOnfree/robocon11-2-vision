@@ -10,9 +10,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <deque>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -78,12 +82,14 @@ public:
     initializeSerial(true);
     createInterfaces();
     createReconnectTimer();
+    startConsoleThread();
 
     RCLCPP_INFO(get_logger(),
-                "R2 serial bridge ready: serial=%s, raw_downlink=%s, raw_uplink=%s, pose_odom=%s",
+                "R2 串口收发节点已启动: 串口=%s, 下发话题=%s, 回传话题=%s, 里程计转发=%s",
                 serial_port_.c_str(), raw_packet_topic_.c_str(),
                 uplink_packet_topic_.c_str(),
-                pose_odom_topic_.empty() ? "<disabled>" : pose_odom_topic_.c_str());
+                pose_odom_topic_.empty() ? "<关闭>" : pose_odom_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "串口节点控制台: 输入 L n 可查看最近 n 条下位机回传包");
   }
 
   ~R2DataDownlinkNode() override {
@@ -103,9 +109,11 @@ private:
     write_rate_limit_enabled_ = declare_parameter<bool>("write_rate_limit.enabled", true);
     write_min_interval_ms_ = declare_parameter<int>("write_rate_limit.min_interval_ms", 10);
     debug_print_pose_tx_ = declare_parameter<bool>("debug.print_pose_tx", false);
-    debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 5000);
+    debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 20000);
+    debug_drop_summary_every_n_ = declare_parameter<int>("debug.drop_summary_every_n", 50);
     reconnect_enabled_ = declare_parameter<bool>("reconnect.enabled", true);
     reconnect_interval_ms_ = declare_parameter<int>("reconnect.interval_ms", 1000);
+    reconnect_log_every_n_ = declare_parameter<int>("reconnect.log_every_n", 10);
 
     raw_packet_topic_ = declare_parameter<std::string>(
         "topics.raw_packet", "/r2_serial/downlink/packet");
@@ -200,6 +208,8 @@ private:
         std::lock_guard<std::mutex> lock(serial_mutex_);
         serial_connector_ = std::move(connector);
         serial_connected_.store(true);
+        reconnect_failure_count_.store(0);
+        disconnected_drop_count_.store(0);
       }
 
       if (!io_context_thread_.joinable()) {
@@ -219,8 +229,14 @@ private:
         RCLCPP_ERROR(get_logger(), "串口启动失败: %s (%s)，等待自动重连",
                      serial_port_.c_str(), ex.what());
       } else {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                             "串口重连失败: %s (%s)", serial_port_.c_str(), ex.what());
+        const auto attempts = reconnect_failure_count_.fetch_add(1) + 1;
+        const auto log_every = std::max(1, reconnect_log_every_n_);
+        if (attempts % static_cast<std::uint64_t>(log_every) == 0) {
+          RCLCPP_WARN(get_logger(),
+                      "串口仍未恢复: %s (%s)，已重试 %llu 次",
+                      serial_port_.c_str(), ex.what(),
+                      static_cast<unsigned long long>(attempts));
+        }
       }
     }
   }
@@ -238,6 +254,46 @@ private:
           }
         });
     RCLCPP_INFO(get_logger(), "串口自动重连: 开启，间隔=%d ms", interval_ms);
+  }
+
+  void startConsoleThread() {
+    console_thread_ = std::thread(&R2DataDownlinkNode::consoleLoop, this);
+    console_thread_.detach();
+  }
+
+  void consoleLoop() {
+    std::string line;
+    while (rclcpp::ok() && std::getline(std::cin, line)) {
+      if (line.empty()) {
+        continue;
+      }
+      const char cmd = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(line.front())));
+      if (cmd == 'l') {
+        printRecentUplink(line);
+      } else {
+        std::printf("\n[r2_serial] 当前只支持 L n：查看最近 n 条下位机回传包。\n");
+      }
+    }
+  }
+
+  void printRecentUplink(const std::string &line) {
+    int count = 10;
+    std::sscanf(line.c_str(), "%*c %d", &count);
+    count = std::max(1, std::min(count, 100));
+
+    std::lock_guard<std::mutex> lock(uplink_history_mutex_);
+    std::printf("\n========== [最近 %d 条下位机回传包] ==========\n", count);
+    if (uplink_history_.empty()) {
+      std::printf("  暂无回传包。请确认下位机已发送 AA55...55AA 协议包，且串口连接正常。\n");
+    } else {
+      int printed = 0;
+      for (auto it = uplink_history_.rbegin();
+           it != uplink_history_.rend() && printed < count; ++it, ++printed) {
+        std::printf("  %s\n", it->c_str());
+      }
+    }
+    std::printf("=============================================\n");
   }
 
   void handleSerialError(const std::error_code &ec) {
@@ -419,7 +475,7 @@ private:
     const auto yaw_deg = checkedInt16(std::lround(yaw * 180.0 / M_PI));
     if (!x_mm || !y_mm || !yaw_deg) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Odometry pose exceeds int16 payload range; skip 0x0101");
+                           "里程计位置超出 int16 下发范围，跳过 0x0101");
       return;
     }
     sendPacket(protocol::kPoseUpdate, makeNavPayload(*x_mm, *y_mm, *yaw_deg), false);
@@ -438,28 +494,28 @@ private:
 
     const bool log_tx_detail =
         serial_debug_raw_ && (debug_print_pose_tx_ || code != protocol::kPoseUpdate);
-    if (log_tx_detail) {
-      std::vector<std::uint8_t> bytes(packet->begin(), packet->end());
-      RCLCPP_INFO(get_logger(), "串口原始发送: code=0x%04x %zu bytes [%s]",
-                  code, bytes.size(), bytesToHex(bytes.data(), bytes.size()).c_str());
-    } else if (serial_debug_raw_ && code == protocol::kPoseUpdate) {
-      const auto hidden = suppressed_pose_tx_count_.fetch_add(1) + 1;
-      RCLCPP_INFO_THROTTLE(
-          get_logger(), *get_clock(), debug_pose_tx_summary_ms_,
-          "调试日志已隐藏 0x0101 位置下发包，累计=%llu；如需完整打印，设置 debug_print_pose_tx:=true",
-          static_cast<unsigned long long>(hidden));
-    }
 
     std::shared_ptr<SerialConnector> connector;
     {
       std::lock_guard<std::mutex> lock(serial_mutex_);
       if (!serial_connector_ || !serial_connected_.load()) {
         tx_failure_count_.fetch_add(1);
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Serial is not ready; drop code=0x%04x", code);
+        const auto dropped = disconnected_drop_count_.fetch_add(1) + 1;
+        const auto log_every = std::max(1, debug_drop_summary_every_n_);
+        if (dropped % static_cast<std::uint64_t>(log_every) == 0) {
+          RCLCPP_WARN(get_logger(),
+                      "串口未连接，已丢弃 %llu 个下发包，最近丢弃 code=0x%04x",
+                      static_cast<unsigned long long>(dropped), code);
+        }
         return false;
       }
       connector = serial_connector_;
+    }
+
+    if (log_tx_detail) {
+      std::vector<std::uint8_t> bytes(packet->begin(), packet->end());
+      RCLCPP_INFO(get_logger(), "串口原始发送: code=0x%04x %zu bytes [%s]",
+                  code, bytes.size(), bytesToHex(bytes.data(), bytes.size()).c_str());
     }
     if (clear_pending) {
       connector->clearPendingWrites();
@@ -472,6 +528,12 @@ private:
             if (log_tx_detail) {
               RCLCPP_INFO(get_logger(), "串口写入完成: code=0x%04x bytes=%zu",
                           code, bytes_transferred);
+            } else if (serial_debug_raw_ && code == protocol::kPoseUpdate) {
+              const auto hidden = suppressed_pose_tx_count_.fetch_add(1) + 1;
+              RCLCPP_INFO_THROTTLE(
+                  get_logger(), *get_clock(), debug_pose_tx_summary_ms_,
+                  "已隐藏 0x0101 位置下发包详细日志，成功发送累计=%llu；如需完整打印，设置 debug_print_pose_tx:=true",
+                  static_cast<unsigned long long>(hidden));
             }
           } else {
             tx_failure_count_.fetch_add(1);
@@ -490,6 +552,7 @@ private:
     msg.code = packet.code();
     msg.payload.assign(packet.body_data(), packet.body_data() + packet.body_size());
     msg.clear_pending = false;
+    recordUplinkHistory(msg);
     for (const auto &pub : uplink_packet_pubs_) {
       pub->publish(msg);
     }
@@ -509,6 +572,24 @@ private:
       RCLCPP_INFO(get_logger(), "收到有效串口包: code=0x%04x payload=[%s] len=%u bytes",
                   packet.code(), payload_hex.empty() ? "<empty>" : payload_hex.c_str(),
                   packet.body_size());
+    }
+  }
+
+  void recordUplinkHistory(const r2_serial::msg::SerialPacket &msg) {
+    std::ostringstream line;
+    line << "code=0x" << std::hex << std::setw(4) << std::setfill('0') << msg.code
+         << std::dec << " payload=[";
+    if (msg.payload.empty()) {
+      line << "<empty>";
+    } else {
+      line << bytesToHex(msg.payload.data(), msg.payload.size());
+    }
+    line << "] len=" << msg.payload.size() << " bytes";
+
+    std::lock_guard<std::mutex> lock(uplink_history_mutex_);
+    uplink_history_.push_back(line.str());
+    while (uplink_history_.size() > 100) {
+      uplink_history_.pop_front();
     }
   }
 
@@ -538,13 +619,13 @@ private:
       return;
     }
     std_msgs::msg::UInt16 msg;
-    std::uint16_t data{};
-    data |= packet.body_data()[0];
-    data |= (packet.body_data()[1] << 8) & 0xFF;
+    const std::uint16_t data =
+        static_cast<std::uint16_t>(packet.body_data()[0]) |
+        (static_cast<std::uint16_t>(packet.body_data()[1]) << 8);
     msg.data = data;
     path_request_new_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s, index=%d",
-                packet.code(), path_request_topic_.c_str(), static_cast<int>(msg.data));
+                packet.code(), path_request_new_topic_.c_str(), static_cast<int>(msg.data));
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
@@ -596,7 +677,10 @@ private:
   asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
   std::shared_ptr<SerialConnector> serial_connector_;
   std::thread io_context_thread_;
+  std::thread console_thread_;
   std::mutex serial_mutex_;
+  std::mutex uplink_history_mutex_;
+  std::deque<std::string> uplink_history_;
   std::atomic<bool> serial_connected_{false};
   rclcpp::TimerBase::SharedPtr reconnect_timer_;
 
@@ -605,9 +689,11 @@ private:
   bool write_rate_limit_enabled_{true};
   int write_min_interval_ms_{10};
   bool debug_print_pose_tx_{false};
-  int debug_pose_tx_summary_ms_{5000};
+  int debug_pose_tx_summary_ms_{20000};
+  int debug_drop_summary_every_n_{50};
   bool reconnect_enabled_{true};
   int reconnect_interval_ms_{1000};
+  int reconnect_log_every_n_{10};
 
   std::string raw_packet_topic_;
   std::string raw_packet_r2_topic_;
@@ -645,6 +731,8 @@ private:
   std::atomic<std::uint64_t> tx_success_count_{0};
   std::atomic<std::uint64_t> tx_failure_count_{0};
   std::atomic<std::uint64_t> suppressed_pose_tx_count_{0};
+  std::atomic<std::uint64_t> disconnected_drop_count_{0};
+  std::atomic<std::uint64_t> reconnect_failure_count_{0};
 
   std::vector<std::string> raw_packet_topics_;
   std::vector<std::string> uplink_packet_topics_;

@@ -1,0 +1,26 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>fast_lio_localization_sc_qn_ros2</name>
+  <version>0.1.0</version>
+  <description>ROS 2 port of FAST-LIO Localization with ScanContext, Quatro and Nano-GICP map matching.</description>
+  <maintainer email="robocon@example.com">robocon</maintainer>
+  <license>BSD-3-Clause</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>message_filters</depend>
+  <depend>nav_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>pcl_conversions</depend>
+  <depend>scancontext_tro</depend>
+  <depend>nano_gicp</depend>
+  <depend>quatro</depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
