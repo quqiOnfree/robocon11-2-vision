@@ -11,18 +11,17 @@ from PySide6.QtWidgets import (
     QGraphicsItem,
     QDockWidget,
     QButtonGroup,
-    QComboBox,
     QStyleOptionGraphicsItem,
     QApplication,
     QMessageBox,
 )
-from PySide6.QtGui import QPainter, QColor, QFont
+from PySide6.QtGui import QPainter, QColor, QFont, QPen
 import sys
 import json
 from enum import Enum
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Int8
 
 
 class BlockLevel(Enum):
@@ -126,6 +125,13 @@ class BlockItem(QGraphicsRectItem):
             painter.setPen(types[3][3])  # white
             painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "False_KFS")
 
+        if self.isSelected():
+            painter.setPen(QPen(QColor("red"), 5))
+            painter.setBrush(QColor("red"))
+            bounding = self.boundingRect()
+            painter.drawPolyline([bounding.topLeft(), bounding.topRight(),
+                                  bounding.bottomRight(), bounding.bottomLeft(),
+                                  bounding.topLeft()])
 
 class MainWindow(QMainWindow):
     emit_grid = Signal(dict)
@@ -146,6 +152,8 @@ class MainWindow(QMainWindow):
         self.graphics_view = QGraphicsView(self.graphics_scene, parent=self)
         self.graphics_view.setMinimumSize(500, 400 + 20)
         layout.addWidget(self.graphics_view)
+
+        self.scene_index = 1
 
         self.create_side_panel()
         self.change_scene(0)  # 默认加载蓝色场景
@@ -173,11 +181,25 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QGridLayout(widget)
 
-        scene_combo = QComboBox()
-        scene_combo.addItems(["蓝色场景", "红色场景"])
-        scene_combo.currentIndexChanged.connect(self.change_scene)
-        scene_combo.setFixedSize(100, 100)
-        layout.addWidget(scene_combo, 0, 0)
+        # scene_combo = QComboBox()
+        # scene_combo.addItems(["蓝色场景", "红色场景"])
+        # scene_combo.currentIndexChanged.connect(self.change_scene)
+        # scene_combo.setFixedSize(100, 100)
+        # layout.addWidget(scene_combo, 0, 0)
+
+        select_blue_scene = QPushButton(self)
+        select_blue_scene.setText("蓝色场景")
+        select_blue_scene.setStyleSheet(f"background-color: {QColor('lightblue').name()};")
+        select_blue_scene.clicked.connect(lambda: self.change_scene(0))
+        select_blue_scene.setFixedSize(100, 100)
+        layout.addWidget(select_blue_scene, 0, 0)
+
+        select_red_scene = QPushButton(self)
+        select_red_scene.setText("红色场景")
+        select_red_scene.setStyleSheet(f"background-color: {QColor('lightcoral').name()};")
+        select_red_scene.clicked.connect(lambda: self.change_scene(1))
+        select_red_scene.setFixedSize(100, 100)
+        layout.addWidget(select_red_scene, 0, 1)
 
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
@@ -257,6 +279,9 @@ class MainWindow(QMainWindow):
         self.graphics_scene.clearSelection()
 
     def change_scene(self, scene_index: int):
+        if scene_index == self.scene_index:
+            return
+        self.scene_index = scene_index
         new_grid = []
         if scene_index == 0:  # 蓝色场景
             new_grid = [
@@ -287,15 +312,15 @@ class MainWindow(QMainWindow):
 
 class PathSignalEmitter(QObject):
     path_signal = Signal(list)
-
+    scene_signal = Signal(int)
 
 class Ros2Node(Node):
-
     def __init__(self):
         Node.__init__(self, "hand_input_path_node")
         self.path_signal = PathSignalEmitter()
         # 这里可以初始化 ROS2 节点和发布者
-        self.publisher = self.create_publisher(String, "grid_data", 10)
+        self.grid_publisher = self.create_publisher(String, "grid_data", 10)
+        self.scene_subcription = self.create_subscription(Int8, "/r2/match_zone", self.scene_received, 10)
         self.subscriber = self.create_subscription(String, "path_commands", self.path_received, 10)
 
     @Slot(dict)
@@ -307,7 +332,7 @@ class Ros2Node(Node):
         json_data = json.dumps(grid_data)
         msg = String()
         msg.data = json_data
-        self.publisher.publish(msg)
+        self.grid_publisher.publish(msg)
         print("Published grid data:", json_data)
 
     def path_received(self, msg: String):
@@ -318,6 +343,9 @@ class Ros2Node(Node):
         except json.JSONDecodeError:
             print("Failed to decode path command:", msg.data)
 
+    def scene_received(self, msg: Int8):
+        code = msg.data
+        self.path_signal.scene_signal.emit(code)
 
 def main():
     rclpy.init()
@@ -326,6 +354,7 @@ def main():
     node = Ros2Node()
     window.emit_grid.connect(node.publish_grid)
     node.path_signal.path_signal.connect(window.update_path)
+    node.path_signal.scene_signal.connect(window.change_scene)
     window.show()
     timer = QTimer()
     timer.timeout.connect(lambda: rclpy.spin_once(node, timeout_sec=0.01))
