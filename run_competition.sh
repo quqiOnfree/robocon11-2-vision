@@ -35,6 +35,16 @@ start_process() {
 }
 
 select_map() {
+  local preferred=${1:-}
+  if [[ -n "$preferred" && -f "$preferred/poses.csv" && -d "$preferred/keyframes" ]]; then
+    printf '[推荐] 当前半场地图: %s\n' "$preferred" >&2
+    local use_preferred
+    read -r -p "直接回车使用推荐地图；输入 L 查看全部地图: " use_preferred
+    if [[ -z "$use_preferred" ]]; then
+      printf '%s' "$preferred"
+      return 0
+    fi
+  fi
   local maps=()
   while IFS= read -r dir; do
     [[ -f "$dir/poses.csv" && -d "$dir/keyframes" ]] && maps+=("$dir")
@@ -95,7 +105,7 @@ esac
 printf '定位模式：\n  [1] 正常重定位 Localization\n  [2] 纯里程计强制纠正 Fallback\n'
 read -r -p "请选择: " localization_choice
 case "$localization_choice" in
-  1) MODE=localization; ODOM_TOPIC=/r2/global_odometry; MAP_DIR="$(select_map)" ;;
+  1) MODE=localization; ODOM_TOPIC=/r2/global_odometry; MAP_DIR="$(select_map "${MAPS_DIR}/official_map_${ZONE}")" ;;
   2) MODE=fallback; ODOM_TOPIC=/Odometry; MAP_DIR="" ;;
   *) echo "选择无效" >&2; exit 1 ;;
 esac
@@ -109,21 +119,21 @@ if [[ ! -e "$SERIAL_PORT" ]]; then
   printf '%b\n' "${YELLOW}[警告] 串口 ${SERIAL_PORT} 当前不存在，r2_serial 将自动重连。${RESET}"
 fi
 
-if [[ "" == blue && "" == normal ]]; then
+if [[ "$ZONE" == blue && "$GAME" == normal ]]; then
   # START 是 simple_odom 修正后的底盘/MCU 坐标；PRIOR 是 poses.csv 的 map->body 坐标。
-  START_X=-310.0; START_Y=-115.0
+  START_X=0.0; START_Y=0.0
   PRIOR_X=0.0; PRIOR_Y=0.0
 
-elif [[ "" == blue && "" == challenge ]]; then
+elif [[ "$ZONE" == blue && "$GAME" == challenge ]]; then
   START_X=10000.0; START_Y=6500.0
   PRIOR_X=10000.0; PRIOR_Y=6500.0  # 实测 /r2/global_odometry 后替换
 
-elif [[ "" == red && "" == normal ]]; then
-  START_X=-310.0; START_Y=-2950.0
-  PRIOR_X=-310.0; PRIOR_Y=-2950.0  # 实测 /r2/global_odometry 后替换
+elif [[ "$ZONE" == red && "$GAME" == normal ]]; then
+  START_X=0.0; START_Y=0.0
+  PRIOR_X=0.0; PRIOR_Y=0.0  # 实测 /r2/global_odometry 后替换
 else
-  START_X=10000.0; START_Y=-9565.0
-  PRIOR_X=10000.0; PRIOR_Y=-9565.0  # 实测 /r2/global_odometry 后替换
+  START_X=10000.0; START_Y=-6500.0
+  PRIOR_X=10000.0; PRIOR_Y=-6500.0  # 实测 /r2/global_odometry 后替换
 fi
 
 printf '\n配置确认：zone=%s game=%s mode=%s start=(%s,%s) mm\n' \
@@ -175,8 +185,7 @@ set +e
 ros2 run fast_lio simple_odom --ros-args \
   -p mode:="$MODE" -p game:="$GAME" -p zone:="$ZONE" \
   -p odom_topic:="$ODOM_TOPIC" -p localized_topic:=/r2/localized \
-  -p match_zone_topic:=/r2/match_zone \
-  -p "initial_target_point:=[$START_X, $START_Y]"
+  -p match_zone_topic:=/r2/match_zone
 status=$?
 set -e
 exit "$status"

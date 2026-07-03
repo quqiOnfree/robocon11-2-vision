@@ -138,6 +138,7 @@ private:
     cold_start_accumulation_frames_ = std::max(1, cold_start_accumulation_frames_);
     cold_start_max_attempts_ = std::max(1, cold_start_max_attempts_);
     get_parameter("cold_start.use_position_prior", cold_start_use_position_prior_);
+    active_position_prior_ = cold_start_use_position_prior_;
     get_parameter("cold_start.expected_x_mm", cold_start_expected_x_mm_);
     get_parameter("cold_start.expected_y_mm", cold_start_expected_y_mm_);
     get_parameter("cold_start.position_tolerance_m", cold_start_position_tolerance_m_);
@@ -245,6 +246,7 @@ private:
       current_frame_ = PoseCloud{};
       current_keyframe_index_ = 0;
       cold_start_attempts_ = 0;
+      active_position_prior_ = false;
       resetColdStartAccumulatorLocked();
     }
 
@@ -256,7 +258,7 @@ private:
     response->message =
         "relocalization reset accepted; collecting a fresh cold-start window";
     RCLCPP_WARN(get_logger(),
-                "Relocalization triggered: state and synchronized frame cache cleared");
+                "Relocalization triggered: cache cleared; stale startup position prior disabled");
   }
 
   static std::vector<std::string> splitCsvLine(const std::string &line) {
@@ -444,7 +446,7 @@ private:
   void runGlobalMatch(PoseCloud keyframe, bool cold_start_match) {
     auto candidates =
         map_matcher_->fetchCandidateKeyframes(keyframe, map_keyframes_);
-    if (cold_start_match && cold_start_use_position_prior_) {
+    if (cold_start_match && active_position_prior_) {
       candidates.erase(
           std::remove_if(
               candidates.begin(), candidates.end(),
@@ -478,7 +480,7 @@ private:
           keyframe, map_keyframes_, candidate.candidate_index);
       result.scancontext_distance = candidate.scancontext_distance;
       const auto &candidate_pose = map_keyframes_[result.candidate_index].pose;
-      const double prior_distance = cold_start_use_position_prior_
+      const double prior_distance = active_position_prior_
           ? std::hypot(candidate_pose(0, 3) - cold_start_expected_x_mm_ / 1000.0,
                        candidate_pose(1, 3) - cold_start_expected_y_mm_ / 1000.0)
           : 0.0;
@@ -492,7 +494,7 @@ private:
 
       bool better = result.valid && !best.valid;
       if (result.valid == best.valid) {
-        if (cold_start_match && cold_start_use_position_prior_ && result.valid) {
+        if (cold_start_match && active_position_prior_ && result.valid) {
           better = prior_distance + 0.10 < best_prior_distance ||
                    (std::abs(prior_distance - best_prior_distance) <= 0.10 &&
                     result.score < best.score);
@@ -538,7 +540,7 @@ private:
     const Eigen::Matrix4d proposed_map_from_odom =
         best.transform * map_from_odom_;
     keyframe.pose_corrected = proposed_map_from_odom * keyframe.pose_raw;
-    if (cold_start_match && cold_start_use_position_prior_) {
+    if (cold_start_match && active_position_prior_) {
       const double final_prior_distance = std::hypot(
           keyframe.pose_corrected(0, 3) - cold_start_expected_x_mm_ / 1000.0,
           keyframe.pose_corrected(1, 3) - cold_start_expected_y_mm_ / 1000.0);
@@ -692,6 +694,7 @@ private:
   int cold_start_accumulation_frames_ = 10;
   int cold_start_max_attempts_ = 3;
   bool cold_start_use_position_prior_ = false;
+  bool active_position_prior_ = false;
   double cold_start_expected_x_mm_ = 0.0;
   double cold_start_expected_y_mm_ = 0.0;
   double cold_start_position_tolerance_m_ = 2.0;

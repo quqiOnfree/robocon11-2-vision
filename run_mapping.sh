@@ -28,12 +28,14 @@ start_process() {
   printf '[启动] %-24s pid=%s\n' "$name" "$!"
 }
 
-read -r -p "请输入地图后缀名（只允许字母、数字、_、-）: " suffix
-if [[ ! "$suffix" =~ ^[A-Za-z0-9_-]+$ ]]; then
-  printf '%b\n' "${RED}[错误] 非法地图后缀。${RESET}" >&2
-  exit 1
-fi
-MAP_DIR="${PROJECT_ROOT}/maps/official_map_${suffix}"
+printf '请选择建图半场（标准地图名为 official_map_blue / official_map_red）：\n  [1] 蓝方 Blue\n  [2] 红方 Red\n'
+read -r -p "请选择: " map_zone_choice
+case "$map_zone_choice" in
+  1) MAP_ZONE=blue ;;
+  2) MAP_ZONE=red ;;
+  *) printf '%b\n' "${RED}[错误] 半场选择无效。${RESET}" >&2; exit 1 ;;
+esac
+MAP_DIR="${PROJECT_ROOT}/maps/official_map_${MAP_ZONE}"
 
 [[ -f /opt/ros/humble/setup.bash ]] || { echo "缺少 ROS Humble" >&2; exit 1; }
 [[ -f "${PROJECT_ROOT}/install/setup.bash" ]] || { echo "请先 colcon build" >&2; exit 1; }
@@ -57,7 +59,7 @@ if [[ -e "$MAP_DIR" ]]; then
 fi
 
 printf '\n%b\n' "${RED}============================================================${RESET}"
-printf '%b\n' "${RED}  探场建图：推车覆盖完整赛场和稳定的周边结构。${RESET}"
+printf '%b\n' "${RED}  ${MAP_ZONE^^} 半场独立建图：只覆盖当前半场和稳定的周边结构。${RESET}"
 printf '%b\n' "${RED}  完成后在另一个已 source 的终端执行：${RESET}"
 printf '%b\n' "${RED}  ros2 service call /r2/sam/save_map std_srvs/srv/Trigger \"{}\"${RESET}"
 printf '%b\n' "${RED}  看到 success=True 和保存成功日志后，才可在本终端 Ctrl+C。${RESET}"

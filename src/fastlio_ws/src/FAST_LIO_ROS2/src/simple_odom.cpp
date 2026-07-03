@@ -7,7 +7,6 @@
 #include <tf2/utils.h>
 
 #include <algorithm>
-#include <array>
 #include <atomic>
 #include <cctype>
 #include <chrono>
@@ -87,7 +86,6 @@ private:
     kFallbackCalibration,
   };
 
-  static constexpr std::size_t kZoneDetectionSamples = 10;
 
   static std::uint64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -151,43 +149,33 @@ private:
       throw std::invalid_argument("game 必须是 normal 或 challenge");
     }
 
-    const auto zone = lower(declare_parameter<std::string>("zone", "auto"));
+    const auto zone = lower(declare_parameter<std::string>("zone", "blue"));
     if (zone == "blue") {
       configured_zone_ = Zone::kBlue;
     } else if (zone == "red") {
       configured_zone_ = Zone::kRed;
-    } else if (zone == "auto") {
-      configured_zone_ = Zone::kUnlocked;
     } else {
-      throw std::invalid_argument("zone 必须是 auto、blue 或 red");
+      throw std::invalid_argument("双图模式下 zone 必须显式指定为 blue 或 red");
     }
 
     blue_normal_start_point_ = declare_parameter<std::vector<double>>(
-        "blue_normal_start_point", {-310.0, -115.0});
+        "blue_normal_start", {0.0, 0.0});
     blue_challenge_start_point_ = declare_parameter<std::vector<double>>(
-        "blue_challenge_start_point", {10000.0, 6500.0});
+        "blue_challenge_start", {10000.0, 6500.0});
     blue_retry_point_ = declare_parameter<std::vector<double>>(
-        "blue_retry_point", {12000.0, 6500.0});
-    initial_target_point_ = declare_parameter<std::vector<double>>(
-        "initial_target_point", std::vector<double>{});
-    mirror_center_y_ = declare_parameter<double>("mirror_center_y", -1532.5);
+        "blue_retry_start", {12000.0, 6500.0});
+    red_normal_start_point_ = declare_parameter<std::vector<double>>(
+        "red_normal_start", {0.0, 0.0});
+    red_challenge_start_point_ = declare_parameter<std::vector<double>>(
+        "red_challenge_start", {10000.0, -6500.0});
+    red_retry_point_ = declare_parameter<std::vector<double>>(
+        "red_retry_start", {12000.0, -6500.0});
     fallback_average_seconds_ = declare_parameter<double>(
         "fallback.average_seconds", 5.0);
 
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
 
-    // 雷达恢复倾斜安装后，按历史实车标定值补偿升降引起的水平位移。
-    height_compensation_enabled_ = declare_parameter<bool>(
-        "height_compensation.enabled", true);
-    height_compensation_x_per_z_ = declare_parameter<double>(
-        "height_compensation.x_per_z", -0.52);
-    height_compensation_y_per_z_ = declare_parameter<double>(
-        "height_compensation.y_per_z", 0.0);
-    height_compensation_use_initial_z_ = declare_parameter<bool>(
-        "height_compensation.use_initial_z_as_reference", true);
-    height_compensation_reference_z_ = declare_parameter<double>(
-        "height_compensation.reference_z", 0.0);
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
@@ -210,50 +198,33 @@ private:
 
   void validateParameters() {
     blue_normal_ = pointFromParameter(blue_normal_start_point_,
-                                     "blue_normal_start_point");
+                                     "blue_normal_start");
     blue_challenge_ = pointFromParameter(blue_challenge_start_point_,
-                                        "blue_challenge_start_point");
-    blue_retry_ = pointFromParameter(blue_retry_point_, "blue_retry_point");
-    if (!std::isfinite(mirror_center_y_)) {
-      throw std::invalid_argument("mirror_center_y 必须是有限数值");
-    }
-    if (!initial_target_point_.empty()) {
-      initial_target_override_ = pointFromParameter(initial_target_point_,
-                                                    "initial_target_point");
-    }
+                                        "blue_challenge_start");
+    blue_retry_ = pointFromParameter(blue_retry_point_, "blue_retry_start");
+    red_normal_ = pointFromParameter(red_normal_start_point_,
+                                    "red_normal_start");
+    red_challenge_ = pointFromParameter(red_challenge_start_point_,
+                                       "red_challenge_start");
+    red_retry_ = pointFromParameter(red_retry_point_, "red_retry_start");
     fallback_average_seconds_ = std::max(0.5, fallback_average_seconds_);
-    if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_) ||
-        !std::isfinite(height_compensation_x_per_z_) ||
-        !std::isfinite(height_compensation_y_per_z_) ||
-        !std::isfinite(height_compensation_reference_z_)) {
-      throw std::invalid_argument("车体外参与高度补偿参数必须是有限数值");
+    if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_)) {
+      throw std::invalid_argument("二维车体外参必须是有限数值");
     }
-    if (mode_ == Mode::kFallback && configured_zone_ == Zone::kUnlocked) {
-      throw std::invalid_argument("fallback 模式必须显式传入 zone:=blue 或 zone:=red");
-    }
-  }
-
-  PointMm mirrorPoint(const PointMm &blue) const {
-    return {blue.x, 2.0 * mirror_center_y_ - blue.y};
-  }
-
-  PointMm anchorFor(Zone zone, const PointMm &blue_anchor) const {
-    return zone == Zone::kRed ? mirrorPoint(blue_anchor) : blue_anchor;
   }
 
   PointMm startPointFor(Zone zone) const {
-    const PointMm &blue = game_ == Game::kNormal ? blue_normal_ : blue_challenge_;
-    return anchorFor(zone, blue);
+    if (zone == Zone::kRed) {
+      return game_ == Game::kNormal ? red_normal_ : red_challenge_;
+    }
+    return game_ == Game::kNormal ? blue_normal_ : blue_challenge_;
   }
 
   PointMm retryPointFor(Zone zone) const {
-    return anchorFor(zone, blue_retry_);
+    return zone == Zone::kRed ? red_retry_ : blue_retry_;
   }
 
   PointMm initialTargetPoint() const {
-    if (initial_target_override_) {
-      return *initial_target_override_;
-    }
     return startPointFor(configured_zone_);
   }
 
@@ -295,43 +266,6 @@ private:
     RCLCPP_INFO(get_logger(),
                 "================ [Zone Detected] Locked to %s zone (%s) ================",
                 zone == Zone::kBlue ? "BLUE" : "RED", reason);
-  }
-
-  bool updateZoneDetection(double x_mm, double y_mm) {
-    if (zone_.load() != Zone::kUnlocked) {
-      return true;
-    }
-
-    zone_detection_sum_x_ += x_mm;
-    zone_detection_sum_y_ += y_mm;
-    ++zone_detection_sample_count_;
-    if (zone_detection_sample_count_ < kZoneDetectionSamples) {
-      return false;
-    }
-
-    const PointMm mean{
-        zone_detection_sum_x_ / static_cast<double>(zone_detection_sample_count_),
-        zone_detection_sum_y_ / static_cast<double>(zone_detection_sample_count_)};
-    const std::array<std::pair<Zone, PointMm>, 6> candidates{{
-        {Zone::kBlue, blue_normal_},
-        {Zone::kBlue, blue_challenge_},
-        {Zone::kBlue, blue_retry_},
-        {Zone::kRed, mirrorPoint(blue_normal_)},
-        {Zone::kRed, mirrorPoint(blue_challenge_)},
-        {Zone::kRed, mirrorPoint(blue_retry_)},
-    }};
-
-    Zone detected = Zone::kBlue;
-    double best_distance = std::numeric_limits<double>::infinity();
-    for (const auto &[candidate_zone, point] : candidates) {
-      const double distance = std::hypot(mean.x - point.x, mean.y - point.y);
-      if (distance < best_distance) {
-        best_distance = distance;
-        detected = candidate_zone;
-      }
-    }
-    lockZone(detected, "六锚点自动判定");
-    return true;
   }
 
   void beginAverage(AveragePurpose purpose, PointMm target,
@@ -515,11 +449,6 @@ private:
         << " mm | Y: " << current_y_.load()
         << " mm | Z: " << current_z_.load()
         << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
-    if (height_compensation_enabled_) {
-      out << "高度补偿状态 : ref_z=" << height_compensation_reference_z_mm_.load()
-          << " mm | dx=" << height_compensation_dx_mm_.load()
-          << " mm | dy=" << height_compensation_dy_mm_.load() << " mm\n";
-    }
     out << "定位有效状态 : "
         << (localization_confirmed_.load() ? "有效" : "无效/等待重定位") << "\n";
     out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
@@ -580,26 +509,9 @@ private:
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     const double lidar_z = msg->pose.pose.position.z;
-    double lidar_x = msg->pose.pose.position.x;
-    double lidar_y = msg->pose.pose.position.y;
+    const double lidar_x = msg->pose.pose.position.x;
+    const double lidar_y = msg->pose.pose.position.y;
 
-    if (height_compensation_enabled_) {
-      if (height_compensation_use_initial_z_ &&
-          !height_reference_initialized_.exchange(true)) {
-        height_compensation_reference_z_ = lidar_z;
-      }
-      const double dz = lidar_z - height_compensation_reference_z_;
-      const double dx = dz * height_compensation_x_per_z_;
-      const double dy = dz * height_compensation_y_per_z_;
-      lidar_x -= dx;
-      lidar_y -= dy;
-      height_compensation_reference_z_mm_.store(
-          static_cast<std::int16_t>(std::lround(height_compensation_reference_z_ * 1000.0)));
-      height_compensation_dx_mm_.store(
-          static_cast<std::int16_t>(std::lround(dx * 1000.0)));
-      height_compensation_dy_mm_.store(
-          static_cast<std::int16_t>(std::lround(dy * 1000.0)));
-    }
     const tf2::Quaternion q(
         msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
         msg->pose.pose.orientation.z, msg->pose.pose.orientation.w);
@@ -629,8 +541,7 @@ private:
     processAverage(raw_x_mm, raw_y_mm, yaw);
 
     if (mode_ == Mode::kLocalization) {
-      if (!localization_confirmed_.load() ||
-          !updateZoneDetection(raw_x_mm, raw_y_mm)) {
+      if (!localization_confirmed_.load()) {
         return;
       }
     } else {
@@ -651,16 +562,16 @@ private:
     const double output_y_mm = physical_y_mm;
     const double output_yaw = yaw * 180.0 / M_PI;
 
-    const auto mapped_x = checkedInt16(output_x_mm, "映射位置 X");
-    const auto mapped_y = checkedInt16(output_y_mm, "映射位置 Y");
-    const auto mapped_yaw = checkedInt16(output_yaw, "映射位置 Yaw");
-    if (!mapped_x || !mapped_y || !mapped_yaw) {
+    const auto serial_x = checkedInt16(output_x_mm, "下发位置 X");
+    const auto serial_y = checkedInt16(output_y_mm, "下发位置 Y");
+    const auto serial_yaw = checkedInt16(output_yaw, "下发位置 Yaw");
+    if (!serial_x || !serial_y || !serial_yaw) {
       return;
     }
-    output_x_.store(*mapped_x);
-    output_y_.store(*mapped_y);
-    output_yaw_deg_.store(*mapped_yaw);
-    publishPosition(*mapped_x, *mapped_y, *mapped_yaw);
+    output_x_.store(*serial_x);
+    output_y_.store(*serial_y);
+    output_yaw_deg_.store(*serial_yaw);
+    publishPosition(*serial_x, *serial_y, *serial_yaw);
   }
 
   void printStartupSummary() {
@@ -669,19 +580,15 @@ private:
                 modeName(mode_), gameName(game_), zoneName(configured_zone_),
                 odom_topic_.c_str());
     RCLCPP_INFO(get_logger(),
-                "蓝方锚点(mm): normal=(%.1f,%.1f) challenge=(%.1f,%.1f) retry=(%.1f,%.1f) mirror_y=%.1f",
+                "蓝方独立锚点(mm): normal=(%.1f,%.1f) challenge=(%.1f,%.1f) retry=(%.1f,%.1f)",
                 blue_normal_.x, blue_normal_.y, blue_challenge_.x,
-                blue_challenge_.y, blue_retry_.x, blue_retry_.y,
-                mirror_center_y_);
+                blue_challenge_.y, blue_retry_.x, blue_retry_.y);
+    RCLCPP_INFO(get_logger(),
+                "红方独立锚点(mm): normal=(%.1f,%.1f) challenge=(%.1f,%.1f) retry=(%.1f,%.1f)",
+                red_normal_.x, red_normal_.y, red_challenge_.x,
+                red_challenge_.y, red_retry_.x, red_retry_.y);
     RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
                 base_offset_x_, base_offset_y_);
-    if (height_compensation_enabled_) {
-      RCLCPP_INFO(get_logger(),
-                  "高度补偿已启用: x_per_z=%.3f y_per_z=%.3f reference=%s%.3f m",
-                  height_compensation_x_per_z_, height_compensation_y_per_z_,
-                  height_compensation_use_initial_z_ ? "initial_z=" : "fixed_z=",
-                  height_compensation_reference_z_);
-    }
     std::printf("\n============================================================\n");
     std::printf(" R2 位姿上报节点已启动：q / r1 / r2\n");
     std::printf("============================================================\n> ");
@@ -702,22 +609,18 @@ private:
   std::vector<double> blue_normal_start_point_;
   std::vector<double> blue_challenge_start_point_;
   std::vector<double> blue_retry_point_;
-  std::vector<double> initial_target_point_;
+  std::vector<double> red_normal_start_point_;
+  std::vector<double> red_challenge_start_point_;
+  std::vector<double> red_retry_point_;
   PointMm blue_normal_;
   PointMm blue_challenge_;
   PointMm blue_retry_;
-  std::optional<PointMm> initial_target_override_;
-  double mirror_center_y_{-1532.5};
+  PointMm red_normal_;
+  PointMm red_challenge_;
+  PointMm red_retry_;
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
-  bool height_compensation_enabled_{true};
-  bool height_compensation_use_initial_z_{true};
-  double height_compensation_x_per_z_{-0.52};
-  double height_compensation_y_per_z_{0.0};
-  double height_compensation_reference_z_{0.0};
-  std::atomic<bool> height_reference_initialized_{false};
-
   double fallback_average_seconds_{5.0};
   std::atomic<bool> fallback_calibrated_{false};
   std::atomic<double> runtime_offset_x_mm_{0.0};
@@ -734,9 +637,6 @@ private:
   double average_sum_sin_yaw_{0.0};
   double average_sum_cos_yaw_{0.0};
 
-  double zone_detection_sum_x_{0.0};
-  double zone_detection_sum_y_{0.0};
-  std::size_t zone_detection_sample_count_{0};
   std::atomic<bool> localization_confirmed_{false};
   std::atomic<bool> have_pose_{false};
 
@@ -752,9 +652,6 @@ private:
   std::atomic<std::int16_t> current_y_{0};
   std::atomic<std::int16_t> current_z_{0};
   std::atomic<std::int16_t> current_yaw_deg_{0};
-  std::atomic<std::int16_t> height_compensation_reference_z_mm_{0};
-  std::atomic<std::int16_t> height_compensation_dx_mm_{0};
-  std::atomic<std::int16_t> height_compensation_dy_mm_{0};
   std::atomic<std::int16_t> output_x_{0};
   std::atomic<std::int16_t> output_y_{0};
   std::atomic<std::int16_t> output_yaw_deg_{0};

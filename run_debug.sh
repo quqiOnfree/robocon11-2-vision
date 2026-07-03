@@ -60,9 +60,19 @@ printf '寻点调试模式：\n  [1] 纯里程计 + fallback 坐标纠正\n  [2]
 read -r -p "请选择: " mode_choice
 case "$mode_choice" in
   1) MODE=fallback; ODOM_TOPIC=/Odometry; ZONE=blue; GAME=normal; MAP_DIR="" ;;
-  2) MODE=localization; ODOM_TOPIC=/r2/global_odometry; ZONE=auto; GAME=normal; MAP_DIR="$(select_map)" ;;
+  2) MODE=localization; ODOM_TOPIC=/r2/global_odometry; GAME=normal ;;
   *) echo "选择无效" >&2; exit 1 ;;
 esac
+if [[ "$MODE" == localization ]]; then
+  printf '调试半区：\n  [1] 蓝方 Blue\n  [2] 红方 Red\n'
+  read -r -p "请选择: " debug_zone_choice
+  case "$debug_zone_choice" in
+    1) ZONE=blue ;;
+    2) ZONE=red ;;
+    *) echo "选择无效" >&2; exit 1 ;;
+  esac
+  MAP_DIR="$(select_map)"
+fi
 
 start_process "Livox Mid-360S 驱动" \
   ros2 launch livox_ros_driver2 msg_MID360s_launch.py
@@ -86,8 +96,7 @@ set +e
 ros2 run fast_lio simple_odom --ros-args \
   -p mode:="$MODE" -p game:="$GAME" -p zone:="$ZONE" \
   -p odom_topic:="$ODOM_TOPIC" \
-  -p localized_topic:=/r2/localized \
-  -p 'initial_target_point:=[-310.0, -115.0]'
+  -p localized_topic:=/r2/localized
 status=$?
 set -e
 exit "$status"
