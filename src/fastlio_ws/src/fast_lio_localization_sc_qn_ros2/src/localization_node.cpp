@@ -74,14 +74,22 @@ private:
     declare_parameter<double>("match.timer_hz", 1.0);
     declare_parameter<int>("cold_start.accumulation_frames", 10);
     declare_parameter<int>("cold_start.max_attempts", 3);
+    declare_parameter<bool>("cold_start.use_position_prior", false);
+    declare_parameter<double>("cold_start.expected_x_mm", 0.0);
+    declare_parameter<double>("cold_start.expected_y_mm", 0.0);
+    declare_parameter<double>("cold_start.position_tolerance_m", 2.0);
     declare_parameter<double>("keyframe.distance_threshold", 1.0);
     declare_parameter<int>("keyframe.min_points", 80);
 
     declare_parameter<bool>("match.enable_quatro", true);
     declare_parameter<bool>("match.enable_distance_gate", false);
     declare_parameter<int>("match.num_submap_keyframes", 10);
+    declare_parameter<int>("match.scancontext_num_candidates", 5);
     declare_parameter<double>("match.voxel_resolution", 0.10);
     declare_parameter<double>("match.scancontext_max_correspondence_distance", 30.0);
+    declare_parameter<double>("match.scancontext_distance_threshold", 0.40);
+    declare_parameter<double>("match.overlap_max_distance", 0.50);
+    declare_parameter<double>("match.min_overlap_ratio", 0.30);
 
     declare_parameter<int>("nano_gicp.thread_number", 0);
     declare_parameter<int>("nano_gicp.correspondences_number", 15);
@@ -129,15 +137,25 @@ private:
     get_parameter("cold_start.max_attempts", cold_start_max_attempts_);
     cold_start_accumulation_frames_ = std::max(1, cold_start_accumulation_frames_);
     cold_start_max_attempts_ = std::max(1, cold_start_max_attempts_);
+    get_parameter("cold_start.use_position_prior", cold_start_use_position_prior_);
+    get_parameter("cold_start.expected_x_mm", cold_start_expected_x_mm_);
+    get_parameter("cold_start.expected_y_mm", cold_start_expected_y_mm_);
+    get_parameter("cold_start.position_tolerance_m", cold_start_position_tolerance_m_);
     get_parameter("keyframe.distance_threshold", keyframe_distance_threshold_);
     get_parameter("keyframe.min_points", min_keyframe_points_);
 
     get_parameter("match.enable_quatro", matcher_config_.enable_quatro);
     get_parameter("match.enable_distance_gate", matcher_config_.enable_distance_gate);
     get_parameter("match.num_submap_keyframes", matcher_config_.num_submap_keyframes);
+    get_parameter("match.scancontext_num_candidates",
+                  matcher_config_.scancontext_num_candidates);
     get_parameter("match.voxel_resolution", matcher_config_.voxel_resolution);
     get_parameter("match.scancontext_max_correspondence_distance",
                   matcher_config_.scancontext_max_correspondence_distance);
+    get_parameter("match.scancontext_distance_threshold",
+                  matcher_config_.scancontext_distance_threshold);
+    get_parameter("match.overlap_max_distance", matcher_config_.overlap_max_distance);
+    get_parameter("match.min_overlap_ratio", matcher_config_.min_overlap_ratio);
 
     get_parameter("nano_gicp.thread_number", matcher_config_.gicp.thread_number);
     get_parameter("nano_gicp.correspondences_number", matcher_config_.gicp.correspondences_number);
@@ -363,18 +381,24 @@ private:
       return;
     }
 
-    // Quatro 要求 scan-to-scan 点云规模相近。等待一个静态窗口稳定前端，
-    // 但不叠加重复扫描；选择窗口内点数最丰富的一帧作为冷启动查询。
-    if (cold_start_frame_count_ == 0 ||
-        current.cloud_local.size() > cold_start_accumulator_.cloud_local.size()) {
+    // 将窗口内每帧变换到第一帧 body 坐标并融合。Mid-360 的扫描图案需要
+    // 多帧才能覆盖稳定几何，体素滤波同时削弱重复点和短暂动态物体。
+    if (cold_start_frame_count_ == 0) {
       cold_start_accumulator_ = current;
+      cold_start_accumulator_.cloud_local.clear();
     }
+    const Eigen::Matrix4d current_to_anchor =
+        cold_start_accumulator_.pose_raw.inverse() * current.pose_raw;
+    cold_start_accumulator_.cloud_local +=
+        transformCloud(current.cloud_local, current_to_anchor);
     ++cold_start_frame_count_;
 
     if (cold_start_frame_count_ < cold_start_accumulation_frames_) {
       return;
     }
 
+    cold_start_accumulator_.cloud_local = *voxelizeCloud(
+        cold_start_accumulator_.cloud_local, matcher_config_.voxel_resolution);
     cold_start_accumulator_.index = current_keyframe_index_++;
     cold_start_accumulator_.processed = false;
     cold_start_accumulator_.pose_corrected = cold_start_accumulator_.pose_raw;
@@ -418,10 +442,26 @@ private:
   }
 
   void runGlobalMatch(PoseCloud keyframe, bool cold_start_match) {
-    const int candidate = map_matcher_->fetchClosestKeyframeIndex(keyframe, map_keyframes_);
-    if (candidate < 0) {
+    auto candidates =
+        map_matcher_->fetchCandidateKeyframes(keyframe, map_keyframes_);
+    if (cold_start_match && cold_start_use_position_prior_) {
+      candidates.erase(
+          std::remove_if(
+              candidates.begin(), candidates.end(),
+              [this](const RegistrationOutput &candidate) {
+                const auto &p =
+                    map_keyframes_[candidate.candidate_index].pose;
+                const double dx = p(0, 3) - cold_start_expected_x_mm_ / 1000.0;
+                const double dy = p(1, 3) - cold_start_expected_y_mm_ / 1000.0;
+                return std::hypot(dx, dy) >
+                       cold_start_position_tolerance_m_;
+              }),
+          candidates.end());
+    }
+
+    if (candidates.empty()) {
       RCLCPP_WARN(get_logger(),
-                  "%s: no ScanContext map candidate for keyframe %d",
+                  "%s: no ScanContext candidate survived for keyframe %d",
                   cold_start_match ? "Cold-start match rejected" : "Map match rejected",
                   keyframe.index);
       publishLocalized(false);
@@ -431,18 +471,62 @@ private:
       return;
     }
 
-    const RegistrationOutput result = map_matcher_->perform(keyframe, map_keyframes_, candidate);
+    RegistrationOutput best;
+    double best_prior_distance = std::numeric_limits<double>::infinity();
+    for (const auto &candidate : candidates) {
+      RegistrationOutput result = map_matcher_->perform(
+          keyframe, map_keyframes_, candidate.candidate_index);
+      result.scancontext_distance = candidate.scancontext_distance;
+      const auto &candidate_pose = map_keyframes_[result.candidate_index].pose;
+      const double prior_distance = cold_start_use_position_prior_
+          ? std::hypot(candidate_pose(0, 3) - cold_start_expected_x_mm_ / 1000.0,
+                       candidate_pose(1, 3) - cold_start_expected_y_mm_ / 1000.0)
+          : 0.0;
+      RCLCPP_INFO(
+          get_logger(),
+          "%s candidate=%d sc=%.4f prior=%.3f m converged=%d fitness=%.4f overlap=%.3f valid=%d",
+          cold_start_match ? "Cold-start" : "Map match",
+          result.candidate_index, result.scancontext_distance, prior_distance,
+          result.converged ? 1 : 0, result.score, result.overlap_ratio,
+          result.valid ? 1 : 0);
+
+      bool better = result.valid && !best.valid;
+      if (result.valid == best.valid) {
+        if (cold_start_match && cold_start_use_position_prior_ && result.valid) {
+          better = prior_distance + 0.10 < best_prior_distance ||
+                   (std::abs(prior_distance - best_prior_distance) <= 0.10 &&
+                    result.score < best.score);
+        } else {
+          better = result.score < best.score;
+        }
+      }
+      if (better) {
+        best = result;
+        best_prior_distance = prior_distance;
+      }
+    }
+
+    // 重新执行最佳候选，使 RViz 调试点云与最终决策保持一致。
+    if (best.candidate_index >= 0) {
+      const double sc_distance = best.scancontext_distance;
+      best = map_matcher_->perform(
+          keyframe, map_keyframes_, best.candidate_index);
+      best.scancontext_distance = sc_distance;
+    }
     std_msgs::msg::Float64 score_msg;
-    score_msg.data = result.score;
+    score_msg.data = best.score;
     fitness_pub_->publish(score_msg);
     publishDebugClouds(keyframe.stamp);
 
-    if (!result.valid) {
+    if (!best.valid) {
       RCLCPP_WARN(get_logger(),
-                  "%s: keyframe=%d candidate=%d converged=%d score=%.4f threshold=%.4f",
+                  "%s: keyframe=%d candidate=%d converged=%d score=%.4f overlap=%.3f "
+                  "(threshold score<%.4f overlap>=%.3f)",
                   cold_start_match ? "Cold-start match rejected" : "Map match rejected",
-                  keyframe.index, candidate, result.converged ? 1 : 0, result.score,
-                  matcher_config_.gicp.fitness_score_threshold);
+                  keyframe.index, best.candidate_index,
+                  best.converged ? 1 : 0, best.score, best.overlap_ratio,
+                  matcher_config_.gicp.fitness_score_threshold,
+                  matcher_config_.min_overlap_ratio);
       publishLocalized(false);
       if (cold_start_match) {
         finishColdStartFailure();
@@ -450,9 +534,24 @@ private:
       return;
     }
 
-    // result.transform 把当前修正系中的查询点云变换到 map；与已有 map<-odom 左乘组合。
-    map_from_odom_ = result.transform * map_from_odom_;
-    keyframe.pose_corrected = map_from_odom_ * keyframe.pose_raw;
+    // best.transform 把当前修正系中的查询点云变换到 map；与已有 map<-odom 左乘组合。
+    const Eigen::Matrix4d proposed_map_from_odom =
+        best.transform * map_from_odom_;
+    keyframe.pose_corrected = proposed_map_from_odom * keyframe.pose_raw;
+    if (cold_start_match && cold_start_use_position_prior_) {
+      const double final_prior_distance = std::hypot(
+          keyframe.pose_corrected(0, 3) - cold_start_expected_x_mm_ / 1000.0,
+          keyframe.pose_corrected(1, 3) - cold_start_expected_y_mm_ / 1000.0);
+      if (final_prior_distance > cold_start_position_tolerance_m_) {
+        RCLCPP_WARN(get_logger(),
+                    "Cold-start final pose rejected by position prior: distance=%.3f m tolerance=%.3f m",
+                    final_prior_distance, cold_start_position_tolerance_m_);
+        publishLocalized(false);
+        finishColdStartFailure();
+        return;
+      }
+    }
+    map_from_odom_ = proposed_map_from_odom;
     keyframe.processed = true;
     {
       std::lock_guard<std::mutex> lock(keyframe_mutex_);
@@ -466,9 +565,11 @@ private:
     publishMatchMarker(keyframe.pose_corrected, keyframe.pose_raw, keyframe.stamp);
 
     RCLCPP_INFO(get_logger(),
-                "%s: keyframe=%d candidate=%d score=%.4f; map<-odom locked",
+                "%s: keyframe=%d candidate=%d score=%.4f overlap=%.3f pose=(%.3f, %.3f, %.3f); map<-odom locked",
                 cold_start_match ? "Cold-start match accepted" : "Map match accepted",
-                keyframe.index, candidate, result.score);
+                keyframe.index, best.candidate_index, best.score,
+                best.overlap_ratio, keyframe.pose_corrected(0, 3),
+                keyframe.pose_corrected(1, 3), keyframe.pose_corrected(2, 3));
   }
 
   void finishColdStartFailure() {
@@ -590,6 +691,10 @@ private:
   double match_timer_hz_ = 1.0;
   int cold_start_accumulation_frames_ = 10;
   int cold_start_max_attempts_ = 3;
+  bool cold_start_use_position_prior_ = false;
+  double cold_start_expected_x_mm_ = 0.0;
+  double cold_start_expected_y_mm_ = 0.0;
+  double cold_start_position_tolerance_m_ = 2.0;
   double keyframe_distance_threshold_ = 1.0;
   int min_keyframe_points_ = 80;
 

@@ -25,9 +25,13 @@ fast_lio_localization_sc_qn:
       max_stamp_diff_sec: 0.03
       qos_reliability: reliable
     cold_start:
-      # 静止启动时等待前端稳定，并选择窗口内点数最丰富的一帧强制全局匹配。
-      accumulation_frames: 10
-      max_attempts: 3
+      # 融合静止窗口内的多帧扫描，减少 Mid-360 扫描稀疏和动态遮挡影响。
+      accumulation_frames: 20
+      max_attempts: 6
+      use_position_prior: false
+      expected_x_mm: 0.0
+      expected_y_mm: 0.0
+      position_tolerance_m: 2.0
     keyframe:
       distance_threshold: 1.0
       min_points: 80
@@ -36,9 +40,13 @@ fast_lio_localization_sc_qn:
       enable_quatro: true
       # 纯全局重定位时建议 false；如果已有靠谱初值，可设 true 限制候选距离。
       enable_distance_gate: false
-      num_submap_keyframes: 10
+      num_submap_keyframes: 2
+      scancontext_num_candidates: 5
       voxel_resolution: 0.10
       scancontext_max_correspondence_distance: 30.0
+      scancontext_distance_threshold: 0.40
+      overlap_max_distance: 0.50
+      min_overlap_ratio: 0.30
     nano_gicp:
       thread_number: 0
       correspondences_number: 15

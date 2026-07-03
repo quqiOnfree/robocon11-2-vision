@@ -72,7 +72,9 @@ start_process "FAST-LIO 前端" \
 if [[ "$MODE" == localization ]]; then
   start_process "SC-QN 全局重定位" \
     ros2 launch fast_lio_localization_sc_qn_ros2 localization_sc_qn.launch.py \
-      use_sim_time:=false map_directory:="$MAP_DIR"
+      use_sim_time:=false map_directory:="$MAP_DIR" \
+      use_position_prior:=true \
+      expected_x_mm:=0.0 expected_y_mm:=0.0
 fi
 sleep 2
 

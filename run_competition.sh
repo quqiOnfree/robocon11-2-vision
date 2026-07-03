@@ -109,16 +109,21 @@ if [[ ! -e "$SERIAL_PORT" ]]; then
   printf '%b\n' "${YELLOW}[警告] 串口 ${SERIAL_PORT} 当前不存在，r2_serial 将自动重连。${RESET}"
 fi
 
-if [[ "$ZONE" == blue && "$GAME" == normal ]]; then
+if [[ "" == blue && "" == normal ]]; then
+  # START 是 simple_odom 修正后的底盘/MCU 坐标；PRIOR 是 poses.csv 的 map->body 坐标。
   START_X=-310.0; START_Y=-115.0
+  PRIOR_X=0.0; PRIOR_Y=0.0
 
-elif [[ "$ZONE" == blue && "$GAME" == challenge ]]; then
+elif [[ "" == blue && "" == challenge ]]; then
   START_X=10000.0; START_Y=6500.0
+  PRIOR_X=10000.0; PRIOR_Y=6500.0  # 实测 /r2/global_odometry 后替换
 
-elif [[ "$ZONE" == red && "$GAME" == normal ]]; then
+elif [[ "" == red && "" == normal ]]; then
   START_X=-310.0; START_Y=-2950.0
+  PRIOR_X=-310.0; PRIOR_Y=-2950.0  # 实测 /r2/global_odometry 后替换
 else
   START_X=10000.0; START_Y=-9565.0
+  PRIOR_X=10000.0; PRIOR_Y=-9565.0  # 实测 /r2/global_odometry 后替换
 fi
 
 printf '\n配置确认：zone=%s game=%s mode=%s start=(%s,%s) mm\n' \
@@ -134,7 +139,9 @@ start_process "FAST-LIO 前端" \
 if [[ "$MODE" == localization ]]; then
   start_process "SC-QN 全局重定位" \
     ros2 launch fast_lio_localization_sc_qn_ros2 localization_sc_qn.launch.py \
-      use_sim_time:=false map_directory:="$MAP_DIR"
+      use_sim_time:=false map_directory:="$MAP_DIR" \
+      use_position_prior:=true \
+      expected_x_mm:="$PRIOR_X" expected_y_mm:="$PRIOR_Y"
 fi
 
 # 路径节点先启动并等待 DDS 发现，避免串口接通瞬间丢失首条 0x0301/0x031D。

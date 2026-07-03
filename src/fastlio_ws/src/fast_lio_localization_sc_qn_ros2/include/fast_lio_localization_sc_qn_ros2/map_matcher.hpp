@@ -46,8 +46,12 @@ struct MapMatcherConfig {
   bool enable_quatro = true;
   bool enable_distance_gate = false;
   int num_submap_keyframes = 10;
+  int scancontext_num_candidates = 5;
   double voxel_resolution = 0.10;
   double scancontext_max_correspondence_distance = 30.0;
+  double scancontext_distance_threshold = 0.40;
+  double overlap_max_distance = 0.50;
+  double min_overlap_ratio = 0.30;
   NanoGicpConfig gicp;
   QuatroConfig quatro;
 };
@@ -57,6 +61,8 @@ struct RegistrationOutput {
   bool converged = false;
   double score = std::numeric_limits<double>::max();
   int candidate_index = -1;
+  double scancontext_distance = std::numeric_limits<double>::max();
+  double overlap_ratio = 0.0;
   Eigen::Matrix4d transform = Eigen::Matrix4d::Identity();
 };
 
@@ -69,6 +75,9 @@ public:
   void addMapScanContext(const Cloud &cloud);
   int fetchClosestKeyframeIndex(const PoseCloud &query,
                                 const std::vector<MapKeyframe> &map_keyframes);
+  std::vector<RegistrationOutput> fetchCandidateKeyframes(
+      const PoseCloud &query,
+      const std::vector<MapKeyframe> &map_keyframes);
   RegistrationOutput perform(const PoseCloud &query,
                              const std::vector<MapKeyframe> &map_keyframes,
                              int candidate_index);
@@ -82,8 +91,11 @@ private:
   CloudPair makeSourceAndTarget(const PoseCloud &query,
                                 const std::vector<MapKeyframe> &map_keyframes,
                                 int candidate_index) const;
-  RegistrationOutput icpAlign(const Cloud &source, const Cloud &target);
+  RegistrationOutput icpAlign(
+      const Cloud &source, const Cloud &target,
+      const Eigen::Matrix4d &initial_guess = Eigen::Matrix4d::Identity());
   RegistrationOutput coarseToFineAlign(const Cloud &source, const Cloud &target);
+  double calculateOverlap(const Cloud &aligned, const Cloud &target) const;
 
   MapMatcherConfig config_;
   SCManager scan_context_;
