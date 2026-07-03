@@ -155,6 +155,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.graphics_view)
 
         self.scene_index = 1
+        self.debug_mode = False
 
         self.create_side_panel()
         self.create_lidar_panel()
@@ -178,8 +179,12 @@ class MainWindow(QMainWindow):
         self.grid_items = []
         self.create_grid(grid)
 
-    def create_side_panel(self):
-        # 右侧 self.right_dock 窗口
+    def create_side_panel(self, debug_mode = False):
+        if self.debug_mode == debug_mode and hasattr(self, "right_dock"):
+            return
+        if hasattr(self, "right_dock"):
+            self.removeDockWidget(self.right_dock)
+        self.debug_mode = debug_mode
         self.right_dock = QDockWidget("方块类型", self)
         widget = QWidget(self)
         layout = QGridLayout(widget)
@@ -190,19 +195,20 @@ class MainWindow(QMainWindow):
         # scene_combo.setFixedSize(100, 100)
         # layout.addWidget(scene_combo, 0, 0)
 
-        select_blue_scene = QPushButton(self)
-        select_blue_scene.setText("蓝色场景")
-        select_blue_scene.setStyleSheet(f"background-color: {QColor('lightblue').name()};")
-        select_blue_scene.clicked.connect(lambda: self.change_scene(0))
-        select_blue_scene.setFixedSize(100, 100)
-        layout.addWidget(select_blue_scene, 0, 0)
+        if debug_mode:
+            select_blue_scene = QPushButton(self)
+            select_blue_scene.setText("蓝色场景")
+            select_blue_scene.setStyleSheet(f"background-color: {QColor('lightblue').name()};")
+            select_blue_scene.clicked.connect(lambda: self.change_scene(0))
+            select_blue_scene.setFixedSize(100, 100)
+            layout.addWidget(select_blue_scene, 0, 0)
 
-        select_red_scene = QPushButton(self)
-        select_red_scene.setText("红色场景")
-        select_red_scene.setStyleSheet(f"background-color: {QColor('lightcoral').name()};")
-        select_red_scene.clicked.connect(lambda: self.change_scene(1))
-        select_red_scene.setFixedSize(100, 100)
-        layout.addWidget(select_red_scene, 0, 1)
+            select_red_scene = QPushButton(self)
+            select_red_scene.setText("红色场景")
+            select_red_scene.setStyleSheet(f"background-color: {QColor('lightcoral').name()};")
+            select_red_scene.clicked.connect(lambda: self.change_scene(1))
+            select_red_scene.setFixedSize(100, 100)
+            layout.addWidget(select_red_scene, 0, 1)
 
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
@@ -223,7 +229,7 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet(
                 f"background-color: {color.name()}; color: {text_color.name()};"
             )
-            layout.addWidget(btn, count // 2 + 1, count % 2)
+            layout.addWidget(btn, count // 2 + (1 if debug_mode else 0), count % 2)
             count += 1
             self.type_buttons.addButton(btn)
 
@@ -259,11 +265,14 @@ class MainWindow(QMainWindow):
     def create_menu(self):
         self.toolbar = self.addToolBar("toolbar")
 
-        self.lidar_panel = self.toolbar.addAction("lidar panel")
-        self.lidar_panel.triggered.connect(lambda: self.left_dock.setVisible(True))
+        self.lidar_panel_action = self.toolbar.addAction("lidar panel")
+        self.lidar_panel_action.triggered.connect(lambda: self.left_dock.setVisible(True))
         
-        self.grid_panel = self.toolbar.addAction("grid_panel")
-        self.grid_panel.triggered.connect(lambda: self.right_dock.setVisible(True))
+        self.grid_panel_action = self.toolbar.addAction("grid panel")
+        self.grid_panel_action.triggered.connect(lambda: self.right_dock.setVisible(True))
+
+        self.debug_mode_action = self.toolbar.addAction("debug mode")
+        self.debug_mode_action.triggered.connect(lambda: self.create_side_panel(True) if not self.debug_mode else self.create_side_panel(False))
 
     def get_kfs_type(self) -> list[list[BlockType]]:
         return [[item.block_type for item in row] for row in self.grid_items]
@@ -296,7 +305,6 @@ class MainWindow(QMainWindow):
     def update_lidar_position(self, x_mm: int, y_mm: int, yaw_degree: int):
         self.lidar_pos_label.setText(f"lidar position: ({x_mm}, {y_mm}, {yaw_degree})")
 
-    # ---------- 核心逻辑：把选中的方块设为指定类型 ----------
     def set_selected_type(self, new_type: BlockType):
         selected_items = self.graphics_scene.selectedItems()
         for item in selected_items:
