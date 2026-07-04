@@ -19,7 +19,8 @@ class PathSignalEmitter(QObject):
     lidar_position_signal = Signal(int, int, int)
     # 新增：位姿状态
     odom_signal = Signal(int, int)                    # z_mm, yaw_deg
-    localization_signal = Signal(bool, float)          # localized, fitness
+    localized_signal = Signal(bool)                    # localized
+    fitness_signal = Signal(float)                     # fitness score
     connection_signal = Signal(bool)                   # downlink connected
     mcu_event_signal = Signal(int)                     # event_code
 
@@ -131,17 +132,12 @@ class Ros2Node(Node):
     def localized_callback(self, msg: Bool):
         if self._last_localized != msg.data:
             self._last_localized = msg.data
-            self._emit_localization()
+            self.path_signal.localized_signal.emit(msg.data)
 
     def fitness_callback(self, msg: Float64):
         if self._last_fitness != msg.data:
             self._last_fitness = msg.data
-            self._emit_localization()
-
-    def _emit_localization(self):
-        if self._last_localized is not None and self._last_fitness is not None:
-            self.path_signal.localization_signal.emit(
-                self._last_localized, self._last_fitness)
+            self.path_signal.fitness_signal.emit(msg.data)
 
     def uplink_event_callback(self, msg: UInt16):
         self.path_signal.mcu_event_signal.emit(int(msg.data))
@@ -153,3 +149,12 @@ class Ros2Node(Node):
         if self._last_connection != connected:
             self._last_connection = connected
             self.path_signal.connection_signal.emit(connected)
+
+    def push_telemetry_state(self):
+        """将当前缓存的状态推送到信号（供新连接的 UI 获取初始值）。"""
+        if self._last_localized is not None:
+            self.path_signal.localized_signal.emit(self._last_localized)
+        if self._last_fitness is not None:
+            self.path_signal.fitness_signal.emit(self._last_fitness)
+        if self._last_connection is not None:
+            self.path_signal.connection_signal.emit(self._last_connection)

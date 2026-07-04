@@ -194,6 +194,10 @@ class MainWindow(QMainWindow):
         self.launch_control_dialog.show()
 
     def _open_lidar_panel(self):
+        if hasattr(self, 'lidar_panel_dialog') and self.lidar_panel_dialog is not None:
+            self.lidar_panel_dialog.show()
+            self.lidar_panel_dialog.raise_()
+            return
         self.lidar_panel_dialog = LidarPanelWidget(self)
         if self.ros_node:
             sig = self.ros_node.path_signal
@@ -201,12 +205,16 @@ class MainWindow(QMainWindow):
                 self.lidar_panel_dialog.update_lidar_position)
             sig.odom_signal.connect(
                 self.lidar_panel_dialog.update_odom)
-            sig.localization_signal.connect(
-                self.lidar_panel_dialog.update_localization)
+            sig.localized_signal.connect(
+                self.lidar_panel_dialog.update_localized)
+            sig.fitness_signal.connect(
+                self.lidar_panel_dialog.update_fitness)
             sig.connection_signal.connect(
                 self.lidar_panel_dialog.update_connection)
             sig.mcu_event_signal.connect(
                 self.lidar_panel_dialog.update_mcu_event)
+            # 推送当前缓存状态，避免新对话框显示占位文本
+            self.ros_node.push_telemetry_state()
         self.lidar_panel_dialog.show()
 
     def change_scene(self, scene_index: int):

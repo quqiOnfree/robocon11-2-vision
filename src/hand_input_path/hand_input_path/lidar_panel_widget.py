@@ -100,14 +100,17 @@ class LidarPanelWidget(QDialog):
 
     def update_odom(self, z_mm: int, yaw_deg: int):
         self.z_label.setText(f"Z: {z_mm} mm")
+        self.yaw_label.setText(f"Yaw: {yaw_deg}°")
 
-    def update_localization(self, localized: bool, fitness: float):
+    def update_localized(self, localized: bool):
         if localized:
             self.localized_label.setText("定位: ✓ 已定位")
             self.localized_label.setStyleSheet("color: green;")
         else:
             self.localized_label.setText("定位: ✗ 未定位")
             self.localized_label.setStyleSheet("color: red;")
+
+    def update_fitness(self, fitness: float):
         self.fitness_label.setText(f"得分: {fitness:.2f}")
 
     def update_connection(self, connected: bool):
