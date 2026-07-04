@@ -48,7 +48,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.graphics_view)
 
         self.scene_index = 1
-        self.debug_mode = False
 
         self.create_side_panel()
         self.create_menu()
@@ -71,32 +70,29 @@ class MainWindow(QMainWindow):
         self.grid_items = []
         self.create_grid(grid)
 
-    def create_side_panel(self, debug_mode=False):
-        if self.debug_mode == debug_mode and hasattr(self, "right_dock"):
-            return
+    def create_side_panel(self):
         if hasattr(self, "right_dock"):
             self.removeDockWidget(self.right_dock)
-        self.debug_mode = debug_mode
         self.right_dock = QDockWidget("方块类型", self)
         widget = QWidget(self)
         layout = QGridLayout(widget)
 
-        if debug_mode:
-            select_blue_scene = QPushButton(self)
-            select_blue_scene.setText("蓝色场景")
-            select_blue_scene.setStyleSheet(
-                f"background-color: {QColor('lightblue').name()};")
-            select_blue_scene.clicked.connect(lambda: self.change_scene(0))
-            select_blue_scene.setFixedSize(100, 100)
-            layout.addWidget(select_blue_scene, 0, 0)
+        # 蓝/红场景按钮（常驻）
+        select_blue_scene = QPushButton(self)
+        select_blue_scene.setText("蓝色场景")
+        select_blue_scene.setStyleSheet(
+            f"background-color: {QColor('lightblue').name()};")
+        select_blue_scene.clicked.connect(lambda: self.change_scene(0))
+        select_blue_scene.setFixedSize(100, 100)
+        layout.addWidget(select_blue_scene, 0, 0)
 
-            select_red_scene = QPushButton(self)
-            select_red_scene.setText("红色场景")
-            select_red_scene.setStyleSheet(
-                f"background-color: {QColor('lightcoral').name()};")
-            select_red_scene.clicked.connect(lambda: self.change_scene(1))
-            select_red_scene.setFixedSize(100, 100)
-            layout.addWidget(select_red_scene, 0, 1)
+        select_red_scene = QPushButton(self)
+        select_red_scene.setText("红色场景")
+        select_red_scene.setStyleSheet(
+            f"background-color: {QColor('lightcoral').name()};")
+        select_red_scene.clicked.connect(lambda: self.change_scene(1))
+        select_red_scene.setFixedSize(100, 100)
+        layout.addWidget(select_red_scene, 0, 1)
 
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
@@ -118,8 +114,7 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet(
                 f"background-color: {color.name()}; color: {text_color.name()};"
             )
-            layout.addWidget(btn, count // 2 + (1 if debug_mode else 0),
-                             count % 2)
+            layout.addWidget(btn, count // 2 + 1, count % 2)  # row 从 1 开始
             count += 1
             self.type_buttons.addButton(btn)
 
@@ -154,11 +149,6 @@ class MainWindow(QMainWindow):
         self.grid_panel_action = self.toolbar.addAction("grid panel")
         self.grid_panel_action.triggered.connect(
             lambda: self.right_dock.setVisible(True))
-
-        self.debug_mode_action = self.toolbar.addAction("debug mode")
-        self.debug_mode_action.triggered.connect(
-            lambda: self.create_side_panel(True)
-            if not self.debug_mode else self.create_side_panel(False))
 
     def get_kfs_type(self) -> list[list[BlockType]]:
         return [[item.block_type for item in row] for row in self.grid_items]
@@ -213,8 +203,6 @@ class MainWindow(QMainWindow):
                 self.lidar_panel_dialog.update_connection)
             sig.mcu_event_signal.connect(
                 self.lidar_panel_dialog.update_mcu_event)
-            # 推送当前缓存状态，避免新对话框显示占位文本
-            self.ros_node.push_telemetry_state()
         self.lidar_panel_dialog.show()
 
     def change_scene(self, scene_index: int):
@@ -243,6 +231,9 @@ class MainWindow(QMainWindow):
             ]
             self.graphics_scene.setBackgroundBrush(QColor("lightcoral"))
         self.load_grid(new_grid)
+        # 发布半场设置
+        if self.ros_node:
+            self.ros_node.publish_match_zone(scene_index)
 
     def load_grid(self, grid: list[list[BlockLevel]]):
         self.reset_grid(grid)

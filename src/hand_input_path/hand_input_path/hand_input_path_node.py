@@ -26,7 +26,6 @@ def main():
     # 连接信号槽
     window.emit_grid.connect(node.publish_grid)
     node.path_signal.path_signal.connect(window.update_path)
-    node.path_signal.scene_signal.connect(window.change_scene)
 
     window.show()
 

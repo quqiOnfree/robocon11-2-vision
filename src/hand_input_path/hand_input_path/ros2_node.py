@@ -15,7 +15,6 @@ import r2_serial.msg._serial_packet as serial_packet
 class PathSignalEmitter(QObject):
     # 已有
     path_signal = Signal(list)
-    scene_signal = Signal(int)
     lidar_position_signal = Signal(int, int, int)
     # 新增：位姿状态
     odom_signal = Signal(int, int)                    # z_mm, yaw_deg
@@ -36,10 +35,10 @@ class Ros2Node(Node):
             UInt16, "/r2_serial/downlink/set_start_zone", 10)
         self.start_command_pub = self.create_publisher(
             Empty, "/r2_serial/downlink/start_command", 10)
+        self.match_zone_pub = self.create_publisher(
+            Int8, "/hand_input/match_zone", 10)
 
         # Subscriber (已有)
-        self.scene_subcription = self.create_subscription(
-            Int8, "/r2/match_zone", self.scene_received, 10)
         self.subscriber = self.create_subscription(
             String, "path_commands", self.path_received, 10)
         self.serial_subscriber = self.create_subscription(
@@ -89,6 +88,12 @@ class Ros2Node(Node):
         self.start_command_pub.publish(msg)
         self.get_logger().info("已发送开始命令")
 
+    def publish_match_zone(self, zone: int):
+        msg = Int8()
+        msg.data = zone
+        self.match_zone_pub.publish(msg)
+        self.get_logger().info(f"已发布半场设置: zone={zone}")
+
     def path_received(self, msg: String):
         try:
             path_data = json.loads(msg.data)
@@ -96,13 +101,6 @@ class Ros2Node(Node):
             print("Received path command:", path_data)
         except json.JSONDecodeError:
             print("Failed to decode path command:", msg.data)
-
-    def scene_received(self, msg: Int8):
-        code = int(msg.data)
-        if code not in (0, 1):
-            self.get_logger().warn(f"Unknown match zone: {code}")
-            return
-        self.path_signal.scene_signal.emit(code)
 
     def serial_received(self, msg: serial_packet.SerialPacket):
         if msg.code != 0x0101:
