@@ -26,6 +26,15 @@ class BlockType(Enum):
     False_KFS = 3
 
 
+# (label, BlockType, fill_color, text_color)
+BLOCK_TYPE_DISPLAY = [
+    ("空", BlockType.Empty, QColor("lightgray"), QColor("black")),
+    ("R1KFS", BlockType.R1_KFS, QColor("blue"), QColor("white")),
+    ("R2KFS", BlockType.R2_KFS, QColor("red"), QColor("white")),
+    ("FalseKFS", BlockType.False_KFS, QColor("darkred"), QColor("white")),
+]
+
+
 class BlockItem(QGraphicsRectItem):
     def __init__(self, x, y, width, height, block_level, block_type=BlockType.Empty):
         super().__init__(x, y, width, height)
@@ -64,53 +73,22 @@ class BlockItem(QGraphicsRectItem):
         # 先绘制矩形背景
         super().paint(painter, option, widget)
 
-        # 如果是路径上的方块，绘制一个半透明的覆盖层
+        # 如果是路径上的方块，绘制一个覆盖层标识
         if self.is_path:
             painter.setBrush(QColor(255, 0, 255))
             rect = self.rect()
             small_rect = rect.adjusted(20, 20, -20, -20)
             painter.drawRect(small_rect)
 
-        # 根据 block_type 绘制不同的标识
-        types = [
-            ("空", BlockType.Empty, QColor("lightgray"), QColor("black")),
-            ("R1KFS", BlockType.R1_KFS, QColor("blue"), QColor("white")),
-            ("R2KFS", BlockType.R2_KFS, QColor("red"), QColor("white")),
-            ("FalseKFS", BlockType.False_KFS, QColor("darkred"), QColor("white")),
-        ]
-
-        if self.block_type == BlockType.Empty:
-            rect = self.rect()
-            painter.setBrush(types[0][2])  # lightgray
-            small_rect = rect.adjusted(30, 30, -30, -30)
-            painter.drawRect(small_rect)
-            painter.setFont(QFont("Arial", 10))
-            painter.setPen(types[0][3])  # black
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "Empty")
-        elif self.block_type == BlockType.R1_KFS:
-            rect = self.rect()
-            painter.setBrush(types[1][2])  # blue
-            small_rect = rect.adjusted(30, 30, -30, -30)
-            painter.drawRect(small_rect)
-            painter.setFont(QFont("Arial", 10))
-            painter.setPen(types[1][3])  # white
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "R1_KFS")
-        elif self.block_type == BlockType.R2_KFS:
-            rect = self.rect()
-            painter.setBrush(types[2][2])  # red
-            small_rect = rect.adjusted(30, 30, -30, -30)
-            painter.drawRect(small_rect)
-            painter.setFont(QFont("Arial", 10))
-            painter.setPen(types[2][3])  # white
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "R2_KFS")
-        elif self.block_type == BlockType.False_KFS:
-            rect = self.rect()
-            painter.setBrush(types[3][2])  # darkred
-            small_rect = rect.adjusted(30, 30, -30, -30)
-            painter.drawRect(small_rect)
-            painter.setFont(QFont("Arial", 10))
-            painter.setPen(types[3][3])  # white
-            painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "False_KFS")
+        # 根据 block_type 绘制标识（数据驱动）
+        _, _, fill_color, text_color = BLOCK_TYPE_DISPLAY[self.block_type.value]
+        rect = self.rect()
+        painter.setBrush(fill_color)
+        painter.drawRect(rect.adjusted(30, 30, -30, -30))
+        painter.setFont(QFont("Arial", 10))
+        painter.setPen(text_color)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter,
+                         BLOCK_TYPE_DISPLAY[self.block_type.value][0])
 
         if self.isSelected():
             painter.setPen(QPen(QColor("red"), 5))

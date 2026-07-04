@@ -60,9 +60,11 @@ class LaunchControlWidget(QDialog):
         zone = self.zone_group.checkedId()
         if zone < 0:
             return
-        if hasattr(self.parent(), "ros_node"):
-            self.parent().ros_node.publish_set_zone(zone)
+        ros_node = getattr(self.parent(), "ros_node", None)
+        if ros_node is not None:
+            ros_node.publish_set_zone(zone)
 
     def _on_start_command(self):
-        if hasattr(self.parent(), "ros_node"):
-            self.parent().ros_node.publish_start_command()
+        ros_node = getattr(self.parent(), "ros_node", None)
+        if ros_node is not None:
+            ros_node.publish_start_command()

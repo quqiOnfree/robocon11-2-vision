@@ -17,11 +17,11 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor
 
 try:
-    from .block_item import BlockLevel, BlockItem, BlockType
+    from .block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
     from .launch_control_widget import LaunchControlWidget
     from .lidar_panel_widget import LidarPanelWidget
 except ImportError:
-    from block_item import BlockLevel, BlockItem, BlockType
+    from block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
     from launch_control_widget import LaunchControlWidget
     from lidar_panel_widget import LidarPanelWidget
 
@@ -47,11 +47,17 @@ class MainWindow(QMainWindow):
         self.graphics_view.setMinimumSize(500, 400 + 20)
         layout.addWidget(self.graphics_view)
 
-        self.scene_index = 1
+        self.scene_index = -1
 
         self.create_side_panel()
         self.create_menu()
-        self.change_scene(0)  # 默认加载蓝色场景
+
+        # 占位提示文字
+        self._placeholder = self.graphics_scene.addText("请选择半场")
+        font = self._placeholder.font()
+        font.setPointSize(24)
+        self._placeholder.setFont(font)
+        self._placeholder.setPos(150, 170)
 
     def create_grid(self, grid: list[list[BlockLevel]]):
         self.grid_items = []
@@ -66,6 +72,9 @@ class MainWindow(QMainWindow):
             self.grid_items.append(row_items)
 
     def reset_grid(self, grid: list[list[BlockLevel]]):
+        if hasattr(self, '_placeholder') and self._placeholder is not None:
+            self.graphics_scene.removeItem(self._placeholder)
+            self._placeholder = None
         self.graphics_scene.clear()
         self.grid_items = []
         self.create_grid(grid)
@@ -97,17 +106,9 @@ class MainWindow(QMainWindow):
         # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
 
-        types = [
-            ("空", BlockType.Empty, QColor("lightgray"), QColor("black")),
-            ("R1KFS", BlockType.R1_KFS, QColor("blue"), QColor("white")),
-            ("R2KFS", BlockType.R2_KFS, QColor("red"), QColor("white")),
-            ("FalseKFS", BlockType.False_KFS, QColor("darkred"), QColor("white")),
-        ]
-
         count = 0
-        for name, type_id, color, text_color in types:
+        for name, type_id, color, text_color in BLOCK_TYPE_DISPLAY:
             btn = QPushButton(name)
-            btn.setCheckable(True)
             btn.clicked.connect(
                 lambda checked, t=type_id: self.set_selected_type(t))
             btn.setFixedSize(100, 100)
@@ -118,23 +119,25 @@ class MainWindow(QMainWindow):
             count += 1
             self.type_buttons.addButton(btn)
 
-        emit_btn = QPushButton("发布")
-        emit_btn.clicked.connect(self.send_grid)
-        emit_btn.setFixedSize(100, 100)
-        emit_btn.setStyleSheet(
+        self.emit_btn = QPushButton("发布")
+        self.emit_btn.clicked.connect(self.send_grid)
+        self.emit_btn.setFixedSize(100, 100)
+        self.emit_btn.setStyleSheet(
             f"background-color: {QColor('lightgray').name()}; "
             f"color: {QColor('black').name()};"
         )
-        layout.addWidget(emit_btn)
+        layout.addWidget(self.emit_btn)
 
         # 启动控制按钮
-        launch_btn = QPushButton("启动控制")
-        launch_btn.clicked.connect(self._open_launch_control)
-        launch_btn.setFixedSize(100, 100)
-        launch_btn.setStyleSheet(
+        self.launch_btn = QPushButton("启动控制")
+        self.launch_btn.clicked.connect(self._open_launch_control)
+        self.launch_btn.setFixedSize(100, 100)
+        self.launch_btn.setStyleSheet(
             "background-color: orange; color: black; font-weight: bold;"
         )
-        layout.addWidget(launch_btn)
+        layout.addWidget(self.launch_btn)
+
+        self._set_widgets_enabled(False)
 
         self.right_dock.setWidget(widget)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
@@ -179,7 +182,18 @@ class MainWindow(QMainWindow):
     def clear_selection(self):
         self.graphics_scene.clearSelection()
 
+    def _set_widgets_enabled(self, enabled: bool):
+        """启用/禁用所有依赖场景的控件。"""
+        for btn in self.type_buttons.buttons():
+            btn.setEnabled(enabled)
+        self.emit_btn.setEnabled(enabled)
+        self.launch_btn.setEnabled(enabled)
+
     def _open_launch_control(self):
+        if hasattr(self, 'launch_control_dialog') and self.launch_control_dialog is not None:
+            self.launch_control_dialog.show()
+            self.launch_control_dialog.raise_()
+            return
         self.launch_control_dialog = LaunchControlWidget(self)
         self.launch_control_dialog.show()
 
@@ -191,8 +205,6 @@ class MainWindow(QMainWindow):
         self.lidar_panel_dialog = LidarPanelWidget(self)
         if self.ros_node:
             sig = self.ros_node.path_signal
-            sig.lidar_position_signal.connect(
-                self.lidar_panel_dialog.update_lidar_position)
             sig.odom_signal.connect(
                 self.lidar_panel_dialog.update_odom)
             sig.localized_signal.connect(
@@ -209,6 +221,7 @@ class MainWindow(QMainWindow):
         if scene_index == self.scene_index:
             return
         self.scene_index = scene_index
+        self._set_widgets_enabled(True)
         new_grid = []
         if scene_index == 0:  # 蓝色场景
             new_grid = [
@@ -239,6 +252,9 @@ class MainWindow(QMainWindow):
         self.reset_grid(grid)
 
     def send_grid(self):
+        if self.scene_index < 0 or not self.grid_items:
+            QMessageBox.warning(self, "未选择场景", "请先选择蓝色或红色场景！")
+            return
         grid = dict()
         grid["grid"] = self.get_kfs_type()
         grid["level"] = [[item.block_level for item in row]

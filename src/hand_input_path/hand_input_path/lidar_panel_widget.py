@@ -93,12 +93,9 @@ class LidarPanelWidget(QDialog):
 
     # ── Public update slots ──
 
-    def update_lidar_position(self, x_mm: int, y_mm: int, yaw_deg: int):
+    def update_odom(self, x_mm: int, y_mm: int, z_mm: int, yaw_deg: int):
         self.x_label.setText(f"X: {x_mm} mm")
         self.y_label.setText(f"Y: {y_mm} mm")
-        self.yaw_label.setText(f"Yaw: {yaw_deg}°")
-
-    def update_odom(self, z_mm: int, yaw_deg: int):
         self.z_label.setText(f"Z: {z_mm} mm")
         self.yaw_label.setText(f"Yaw: {yaw_deg}°")
 

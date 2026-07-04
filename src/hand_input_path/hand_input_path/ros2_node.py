@@ -9,15 +9,11 @@ import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Int8, Empty, UInt16, Bool, Float64
 from nav_msgs.msg import Odometry
-import r2_serial.msg._serial_packet as serial_packet
 
 
 class PathSignalEmitter(QObject):
-    # 已有
     path_signal = Signal(list)
-    lidar_position_signal = Signal(int, int, int)
-    # 新增：位姿状态
-    odom_signal = Signal(int, int)                    # z_mm, yaw_deg
+    odom_signal = Signal(int, int, int, int)            # x_mm, y_mm, z_mm, yaw_deg
     localized_signal = Signal(bool)                    # localized
     fitness_signal = Signal(float)                     # fitness score
     connection_signal = Signal(bool)                   # downlink connected
@@ -38,12 +34,9 @@ class Ros2Node(Node):
         self.match_zone_pub = self.create_publisher(
             Int8, "/hand_input/match_zone", 10)
 
-        # Subscriber (已有)
+        # Subscriber
         self.subscriber = self.create_subscription(
             String, "path_commands", self.path_received, 10)
-        self.serial_subscriber = self.create_subscription(
-            serial_packet.SerialPacket,
-            "/r2_serial/downlink/packet", self.serial_received, 10)
 
         # Subscriber (新增：位姿状态)
         odom_topic = self.declare_parameter(
@@ -102,21 +95,10 @@ class Ros2Node(Node):
         except json.JSONDecodeError:
             print("Failed to decode path command:", msg.data)
 
-    def serial_received(self, msg: serial_packet.SerialPacket):
-        if msg.code != 0x0101:
-            return
-        if len(msg.payload) != 6:
-            self.get_logger().warn("error format of serial packet")
-            return
-        x_mm = (msg.payload[0] | (msg.payload[1] << 8)) - 32768
-        y_mm = (msg.payload[2] | (msg.payload[3] << 8)) - 32768
-        yaw_deg = (msg.payload[4] | (msg.payload[5] << 8)) - 32768
-        self.path_signal.lidar_position_signal.emit(x_mm, y_mm, yaw_deg)
-
-    # ── 新增回调 ──
-
     def odom_callback(self, msg: Odometry):
-        """提取 Z (mm) 和 Yaw (deg)."""
+        """提取 X/Y/Z (mm) 和 Yaw (deg)."""
+        x_mm = int(round(msg.pose.pose.position.x * 1000.0))
+        y_mm = int(round(msg.pose.pose.position.y * 1000.0))
         z_mm = int(round(msg.pose.pose.position.z * 1000.0))
 
         # 四元数 → yaw
@@ -125,7 +107,7 @@ class Ros2Node(Node):
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         yaw_deg = int(round(math.atan2(siny, cosy) * 180.0 / math.pi))
 
-        self.path_signal.odom_signal.emit(z_mm, yaw_deg)
+        self.path_signal.odom_signal.emit(x_mm, y_mm, z_mm, yaw_deg)
 
     def localized_callback(self, msg: Bool):
         if self._last_localized != msg.data:
@@ -148,11 +130,3 @@ class Ros2Node(Node):
             self._last_connection = connected
             self.path_signal.connection_signal.emit(connected)
 
-    def push_telemetry_state(self):
-        """将当前缓存的状态推送到信号（供新连接的 UI 获取初始值）。"""
-        if self._last_localized is not None:
-            self.path_signal.localized_signal.emit(self._last_localized)
-        if self._last_fitness is not None:
-            self.path_signal.fitness_signal.emit(self._last_fitness)
-        if self._last_connection is not None:
-            self.path_signal.connection_signal.emit(self._last_connection)

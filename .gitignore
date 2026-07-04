@@ -5,3 +5,4 @@ log/
 .cache/
 __pycache__/
 .claude/
+CLAUDE.md
