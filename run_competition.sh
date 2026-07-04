@@ -102,11 +102,11 @@ case "$game_choice" in
   *) echo "选择无效" >&2; exit 1 ;;
 esac
 
-printf '定位模式：\n  [1] 正常重定位 Localization\n  [2] 纯里程计强制纠正 Fallback\n'
+printf '定位模式：\n  [1] 正常重定位 Localization\n  [2] 纯里程计原始输出 Odometry\n'
 read -r -p "请选择: " localization_choice
 case "$localization_choice" in
   1) MODE=localization; ODOM_TOPIC=/r2/global_odometry; MAP_DIR="$(select_map "${MAPS_DIR}/official_map_${ZONE}")" ;;
-  2) MODE=fallback; ODOM_TOPIC=/Odometry; MAP_DIR="" ;;
+  2) MODE=odometry; ODOM_TOPIC=/Odometry; MAP_DIR="" ;;
   *) echo "选择无效" >&2; exit 1 ;;
 esac
 
@@ -120,24 +120,20 @@ if [[ ! -e "$SERIAL_PORT" ]]; then
 fi
 
 if [[ "$ZONE" == blue && "$GAME" == normal ]]; then
-  # START 是 simple_odom 修正后的底盘/MCU 坐标；PRIOR 是 poses.csv 的 map->body 坐标。
-  START_X=0.0; START_Y=0.0
+  # PRIOR 仅供 Localization 候选筛选；Odometry 模式不会使用。
   PRIOR_X=0.0; PRIOR_Y=0.0
 
 elif [[ "$ZONE" == blue && "$GAME" == challenge ]]; then
-  START_X=10000.0; START_Y=6500.0
   PRIOR_X=10000.0; PRIOR_Y=6500.0  # 实测 /r2/global_odometry 后替换
 
 elif [[ "$ZONE" == red && "$GAME" == normal ]]; then
-  START_X=0.0; START_Y=0.0
   PRIOR_X=0.0; PRIOR_Y=0.0  # 实测 /r2/global_odometry 后替换
 else
-  START_X=10000.0; START_Y=-6500.0
   PRIOR_X=10000.0; PRIOR_Y=-6500.0  # 实测 /r2/global_odometry 后替换
 fi
 
-printf '\n配置确认：zone=%s game=%s mode=%s start=(%s,%s) mm\n' \
-  "$ZONE" "$GAME" "$MODE" "$START_X" "$START_Y"
+printf '\n配置确认：zone=%s game=%s mode=%s prior=(%s,%s) mm（odometry 模式忽略 prior）\n' \
+  "$ZONE" "$GAME" "$MODE" "$PRIOR_X" "$PRIOR_Y"
 read -r -p "输入 YES 确认启动: " confirmation
 [[ "$confirmation" == YES ]] || { echo "已取消"; exit 0; }
 
@@ -176,14 +172,14 @@ NAMES+=("进程监视器")
 
 printf '\n%b\n' "${GREEN}============================================================${RESET}"
 printf '%b\n' "${GREEN}  比赛系统已全线拉起！${RESET}"
-printf '%b\n' "${GREEN}  请在此终端内按 r1（回启动区）或 r2（回重试区）进行异常恢复。${RESET}"
+printf '%b\n' "${GREEN}  r1/r2 仅在 Localization 模式触发重定位，不会平移纯里程计坐标。${RESET}"
 printf '%b\n' "${GREEN}  q：显示状态并执行一次 5 秒静止平均。${RESET}"
 printf '%b\n' "${GREEN}============================================================${RESET}"
 
 # 位姿节点必须占据前台，确保 q/r1/r2 不会被任何后台节点抢走。
 set +e
 ros2 run fast_lio simple_odom --ros-args \
-  -p mode:="$MODE" -p game:="$GAME" -p zone:="$ZONE" \
+  -p mode:="$MODE" -p zone:="$ZONE" \
   -p odom_topic:="$ODOM_TOPIC" -p localized_topic:=/r2/localized \
   -p match_zone_topic:=/r2/match_zone
 status=$?

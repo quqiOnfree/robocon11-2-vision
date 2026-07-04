@@ -31,13 +31,7 @@ namespace protocol = r2_serial::protocol;
 class R2PoseReporter : public rclcpp::Node {
 public:
   enum class Zone : std::int8_t { kUnlocked = -1, kBlue = 0, kRed = 1 };
-  enum class Mode : std::uint8_t { kLocalization, kFallback };
-  enum class Game : std::uint8_t { kNormal, kChallenge };
-
-  struct PointMm {
-    double x{0.0};
-    double y{0.0};
-  };
+  enum class Mode : std::uint8_t { kLocalization, kOdometry };
 
   R2PoseReporter() : Node("r2_pose_reporter") {
     readParameters();
@@ -68,10 +62,8 @@ public:
       lockZone(configured_zone_, "启动参数");
     }
 
-    if (mode_ == Mode::kFallback) {
+    if (mode_ == Mode::kOdometry) {
       localization_confirmed_.store(true);
-      beginAverage(AveragePurpose::kFallbackCalibration, initialTargetPoint(),
-                   "fallback 启动校准");
     }
 
     keyboard_thread_ = std::thread(&R2PoseReporter::keyboardLoop, this);
@@ -81,11 +73,6 @@ public:
   }
 
 private:
-  enum class AveragePurpose : std::uint8_t {
-    kReportOnly,
-    kFallbackCalibration,
-  };
-
 
   static std::uint64_t nowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -111,11 +98,7 @@ private:
   }
 
   static const char *modeName(Mode mode) {
-    return mode == Mode::kLocalization ? "localization" : "fallback";
-  }
-
-  static const char *gameName(Game game) {
-    return game == Game::kNormal ? "normal" : "challenge";
+    return mode == Mode::kLocalization ? "localization" : "odometry";
   }
 
   void readParameters() {
@@ -131,22 +114,13 @@ private:
     relocalization_service_name_ = declare_parameter<std::string>(
         "relocalization_service_name", "/r2/trigger_relocalization");
 
-    const auto mode = lower(declare_parameter<std::string>("mode", "localization"));
+    const auto mode = lower(declare_parameter<std::string>("mode", "odometry"));
     if (mode == "localization") {
       mode_ = Mode::kLocalization;
-    } else if (mode == "fallback") {
-      mode_ = Mode::kFallback;
+    } else if (mode == "odometry") {
+      mode_ = Mode::kOdometry;
     } else {
-      throw std::invalid_argument("mode 必须是 localization 或 fallback");
-    }
-
-    const auto game = lower(declare_parameter<std::string>("game", "normal"));
-    if (game == "normal") {
-      game_ = Game::kNormal;
-    } else if (game == "challenge") {
-      game_ = Game::kChallenge;
-    } else {
-      throw std::invalid_argument("game 必须是 normal 或 challenge");
+      throw std::invalid_argument("mode 必须是 localization 或 odometry；fallback 已移除");
     }
 
     const auto zone = lower(declare_parameter<std::string>("zone", "blue"));
@@ -155,24 +129,11 @@ private:
     } else if (zone == "red") {
       configured_zone_ = Zone::kRed;
     } else {
-      throw std::invalid_argument("双图模式下 zone 必须显式指定为 blue 或 red");
+      throw std::invalid_argument("zone 必须显式指定为 blue 或 red");
     }
 
-    blue_normal_start_point_ = declare_parameter<std::vector<double>>(
-        "blue_normal_start", {0.0, 0.0});
-    blue_challenge_start_point_ = declare_parameter<std::vector<double>>(
-        "blue_challenge_start", {10000.0, 6500.0});
-    blue_retry_point_ = declare_parameter<std::vector<double>>(
-        "blue_retry_start", {12000.0, 6500.0});
-    red_normal_start_point_ = declare_parameter<std::vector<double>>(
-        "red_normal_start", {0.0, 0.0});
-    red_challenge_start_point_ = declare_parameter<std::vector<double>>(
-        "red_challenge_start", {10000.0, -6500.0});
-    red_retry_point_ = declare_parameter<std::vector<double>>(
-        "red_retry_start", {12000.0, -6500.0});
-    fallback_average_seconds_ = declare_parameter<double>(
-        "fallback.average_seconds", 5.0);
-
+    pose_report_average_seconds_ = declare_parameter<double>(
+        "pose_report.average_seconds", 5.0);
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
 
@@ -186,46 +147,11 @@ private:
     }
   }
 
-  PointMm pointFromParameter(const std::vector<double> &value,
-                             const char *name) const {
-    if (value.size() != 2 || !std::isfinite(value[0]) ||
-        !std::isfinite(value[1])) {
-      throw std::invalid_argument(std::string(name) +
-                                  " 必须是两个有限数值 [x_mm, y_mm]");
-    }
-    return {value[0], value[1]};
-  }
-
   void validateParameters() {
-    blue_normal_ = pointFromParameter(blue_normal_start_point_,
-                                     "blue_normal_start");
-    blue_challenge_ = pointFromParameter(blue_challenge_start_point_,
-                                        "blue_challenge_start");
-    blue_retry_ = pointFromParameter(blue_retry_point_, "blue_retry_start");
-    red_normal_ = pointFromParameter(red_normal_start_point_,
-                                    "red_normal_start");
-    red_challenge_ = pointFromParameter(red_challenge_start_point_,
-                                       "red_challenge_start");
-    red_retry_ = pointFromParameter(red_retry_point_, "red_retry_start");
-    fallback_average_seconds_ = std::max(0.5, fallback_average_seconds_);
+    pose_report_average_seconds_ = std::max(0.5, pose_report_average_seconds_);
     if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_)) {
       throw std::invalid_argument("二维车体外参必须是有限数值");
     }
-  }
-
-  PointMm startPointFor(Zone zone) const {
-    if (zone == Zone::kRed) {
-      return game_ == Game::kNormal ? red_normal_ : red_challenge_;
-    }
-    return game_ == Game::kNormal ? blue_normal_ : blue_challenge_;
-  }
-
-  PointMm retryPointFor(Zone zone) const {
-    return zone == Zone::kRed ? red_retry_ : blue_retry_;
-  }
-
-  PointMm initialTargetPoint() const {
-    return startPointFor(configured_zone_);
   }
 
   std::optional<std::int16_t> checkedInt16(double value,
@@ -268,12 +194,9 @@ private:
                 zone == Zone::kBlue ? "BLUE" : "RED", reason);
   }
 
-  void beginAverage(AveragePurpose purpose, PointMm target,
-                    const std::string &reason) {
+  void beginAverage(const std::string &reason) {
     std::lock_guard<std::mutex> lock(average_mutex_);
     average_active_ = true;
-    average_purpose_ = purpose;
-    average_target_ = target;
     average_reason_ = reason;
     average_start_ms_ = 0;
     average_count_ = 0;
@@ -282,12 +205,10 @@ private:
     average_sum_sin_yaw_ = 0.0;
     average_sum_cos_yaw_ = 0.0;
     RCLCPP_INFO(get_logger(), "开始 %.1f 秒静止平均: %s",
-                fallback_average_seconds_, reason.c_str());
+                pose_report_average_seconds_, reason.c_str());
   }
 
   void processAverage(double x_mm, double y_mm, double yaw_rad) {
-    AveragePurpose completed_purpose = AveragePurpose::kReportOnly;
-    PointMm completed_target;
     std::string completed_reason;
     double mean_x = 0.0;
     double mean_y = 0.0;
@@ -310,7 +231,7 @@ private:
       average_sum_cos_yaw_ += std::cos(yaw_rad);
 
       const auto required_ms = static_cast<std::uint64_t>(
-          std::lround(fallback_average_seconds_ * 1000.0));
+          std::lround(pose_report_average_seconds_ * 1000.0));
       if (now - average_start_ms_ < required_ms || average_count_ < 10) {
         return;
       }
@@ -319,42 +240,16 @@ private:
       mean_y = average_sum_y_ / static_cast<double>(average_count_);
       mean_yaw_deg = std::atan2(average_sum_sin_yaw_, average_sum_cos_yaw_) *
                      180.0 / M_PI;
-      completed_purpose = average_purpose_;
-      completed_target = average_target_;
       completed_reason = average_reason_;
       average_active_ = false;
       completed = true;
     }
 
-    if (!completed) {
-      return;
-    }
-    RCLCPP_INFO(get_logger(),
-                "静止平均完成 [%s]: x=%.1f mm y=%.1f mm yaw=%.2f deg",
-                completed_reason.c_str(), mean_x, mean_y, mean_yaw_deg);
-    if (completed_purpose == AveragePurpose::kFallbackCalibration) {
-      runtime_offset_x_mm_.store(completed_target.x - mean_x);
-      runtime_offset_y_mm_.store(completed_target.y - mean_y);
-      fallback_calibrated_.store(true);
+    if (completed) {
       RCLCPP_INFO(get_logger(),
-                  "fallback 偏移已锁定: dx=%.1f mm dy=%.1f mm -> target=(%.1f, %.1f)",
-                  runtime_offset_x_mm_.load(), runtime_offset_y_mm_.load(),
-                  completed_target.x, completed_target.y);
+                  "静止平均完成 [%s]: x=%.1f mm y=%.1f mm yaw=%.2f deg",
+                  completed_reason.c_str(), mean_x, mean_y, mean_yaw_deg);
     }
-  }
-
-  void setFallbackOffsetInstant(const PointMm &target, const char *command) {
-    if (!have_pose_.load()) {
-      RCLCPP_ERROR(get_logger(), "%s 失败：尚未收到里程计", command);
-      return;
-    }
-    runtime_offset_x_mm_.store(target.x - current_x_.load());
-    runtime_offset_y_mm_.store(target.y - current_y_.load());
-    fallback_calibrated_.store(true);
-    RCLCPP_WARN(get_logger(),
-                "%s fallback 瞬时纠正完成: target=(%.1f, %.1f) offset=(%.1f, %.1f)",
-                command, target.x, target.y, runtime_offset_x_mm_.load(),
-                runtime_offset_y_mm_.load());
   }
 
   void triggerRelocalization(const char *command) {
@@ -390,9 +285,9 @@ private:
       triggerRelocalization(command);
       return;
     }
-    const Zone zone = zone_.load();
-    const PointMm target = retry_area ? retryPointFor(zone) : startPointFor(zone);
-    setFallbackOffsetInstant(target, command);
+    RCLCPP_WARN(get_logger(),
+                "%s 在 odometry 模式下不会修改坐标；纯里程计仅输出原始相对位姿",
+                command);
   }
 
   void keyboardLoop() {
@@ -404,19 +299,7 @@ private:
                  line.end());
       if (line == "q") {
         printStatus();
-        bool startup_calibration_active = false;
-        {
-          std::lock_guard<std::mutex> lock(average_mutex_);
-          startup_calibration_active =
-              average_active_ &&
-              average_purpose_ == AveragePurpose::kFallbackCalibration &&
-              !fallback_calibrated_.load();
-        }
-        if (startup_calibration_active) {
-          RCLCPP_WARN(get_logger(), "fallback 启动平均尚未完成，本次 q 不覆盖校准窗口");
-        } else {
-          beginAverage(AveragePurpose::kReportOnly, {}, "q 手动测量");
-        }
+        beginAverage("q 手动测量");
       } else if (line == "r1") {
         handleRecoveryCommand(false);
       } else if (line == "r2") {
@@ -444,23 +327,21 @@ private:
 
     std::ostringstream out;
     out << "\n================ [R2 位姿上报状态] ================\n";
-    out << "运行模式     : " << modeName(mode_) << " | 赛制: " << gameName(game_) << "\n";
-    out << "修正后车体坐标: X: " << current_x_.load()
+    out << "运行模式     : " << modeName(mode_) << "\n";
+    out << "车体中心坐标 : X: " << current_x_.load()
         << " mm | Y: " << current_y_.load()
         << " mm | Z: " << current_z_.load()
         << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
-    out << "定位有效状态 : "
-        << (localization_confirmed_.load() ? "有效" : "无效/等待重定位") << "\n";
+    if (mode_ == Mode::kLocalization) {
+      out << "定位有效状态 : "
+          << (localization_confirmed_.load() ? "有效" : "无效/等待重定位") << "\n";
+    } else {
+      out << "定位有效状态 : 纯里程计直通（不适用）\n";
+    }
     out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
     out << "实际下发位姿 : X: " << output_x_.load()
         << " mm | Y: " << output_y_.load()
         << " mm | Yaw: " << output_yaw_deg_.load() << " deg\n";
-    if (mode_ == Mode::kFallback) {
-      out << "fallback状态 : "
-          << (fallback_calibrated_.load() ? "偏移已锁定" : "等待初始平均")
-          << " | dx=" << runtime_offset_x_mm_.load()
-          << " mm dy=" << runtime_offset_y_mm_.load() << " mm\n";
-    }
     out << "静止平均     : " << (averaging ? "进行中" : "空闲")
         << " | samples=" << samples << "\n";
     out << "r2_serial连接: " << (downlink_connected ? "已发现订阅者" : "未发现订阅者") << "\n";
@@ -471,7 +352,7 @@ private:
     } else {
       out << "ROS发布状态  : 尚未发布 0x0101\n";
     }
-    out << "命令         : q=状态+5秒平均 r1=回启动区 r2=回重试区\n";
+    out << "命令         : q=状态+5秒平均；r1/r2=仅 localization 触发重定位\n";
     out << "==================================================";
     return out.str();
   }
@@ -537,29 +418,15 @@ private:
       current_z_.store(*z_mm);
     }
     current_yaw_deg_.store(*yaw_deg);
-    have_pose_.store(true);
     processAverage(raw_x_mm, raw_y_mm, yaw);
 
-    if (mode_ == Mode::kLocalization) {
-      if (!localization_confirmed_.load()) {
-        return;
-      }
-    } else {
-      if (!fallback_calibrated_.load()) {
-        return;
-      }
+    if (mode_ == Mode::kLocalization && !localization_confirmed_.load()) {
+      return;
     }
 
-    double physical_x_mm = raw_x_mm;
-    double physical_y_mm = raw_y_mm;
-    if (mode_ == Mode::kFallback) {
-      physical_x_mm += runtime_offset_x_mm_.load();
-      physical_y_mm += runtime_offset_y_mm_.load();
-    }
-
-    // 半区只用于策略通知与锚点选择，不再修改实际下发的雷达位姿。
-    const double output_x_mm = physical_x_mm;
-    const double output_y_mm = physical_y_mm;
+    // 半区仅用于状态通知；位姿只做固定的雷达到车体中心二维外参换算。
+    const double output_x_mm = raw_x_mm;
+    const double output_y_mm = raw_y_mm;
     const double output_yaw = yaw * 180.0 / M_PI;
 
     const auto serial_x = checkedInt16(output_x_mm, "下发位置 X");
@@ -576,26 +443,18 @@ private:
 
   void printStartupSummary() {
     RCLCPP_INFO(get_logger(),
-                "R2 pose reporter: mode=%s game=%s zone=%s odom=%s",
-                modeName(mode_), gameName(game_), zoneName(configured_zone_),
-                odom_topic_.c_str());
-    RCLCPP_INFO(get_logger(),
-                "蓝方独立锚点(mm): normal=(%.1f,%.1f) challenge=(%.1f,%.1f) retry=(%.1f,%.1f)",
-                blue_normal_.x, blue_normal_.y, blue_challenge_.x,
-                blue_challenge_.y, blue_retry_.x, blue_retry_.y);
-    RCLCPP_INFO(get_logger(),
-                "红方独立锚点(mm): normal=(%.1f,%.1f) challenge=(%.1f,%.1f) retry=(%.1f,%.1f)",
-                red_normal_.x, red_normal_.y, red_challenge_.x,
-                red_challenge_.y, red_retry_.x, red_retry_.y);
+                "R2 pose reporter: mode=%s zone=%s odom=%s",
+                modeName(mode_), zoneName(configured_zone_), odom_topic_.c_str());
     RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
                 base_offset_x_, base_offset_y_);
+    RCLCPP_INFO(get_logger(),
+                "odometry 模式不执行启动锚点、runtime_offset 或坐标平移");
     std::printf("\n============================================================\n");
-    std::printf(" R2 位姿上报节点已启动：q / r1 / r2\n");
+    std::printf(" R2 位姿上报节点已启动：q；r1/r2 仅用于 localization 重定位\n");
     std::printf("============================================================\n> ");
   }
 
-  Mode mode_{Mode::kLocalization};
-  Game game_{Game::kNormal};
+  Mode mode_{Mode::kOdometry};
   Zone configured_zone_{Zone::kUnlocked};
   std::atomic<Zone> zone_{Zone::kUnlocked};
 
@@ -606,29 +465,11 @@ private:
   std::string status_service_name_;
   std::string relocalization_service_name_;
 
-  std::vector<double> blue_normal_start_point_;
-  std::vector<double> blue_challenge_start_point_;
-  std::vector<double> blue_retry_point_;
-  std::vector<double> red_normal_start_point_;
-  std::vector<double> red_challenge_start_point_;
-  std::vector<double> red_retry_point_;
-  PointMm blue_normal_;
-  PointMm blue_challenge_;
-  PointMm blue_retry_;
-  PointMm red_normal_;
-  PointMm red_challenge_;
-  PointMm red_retry_;
-
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
-  double fallback_average_seconds_{5.0};
-  std::atomic<bool> fallback_calibrated_{false};
-  std::atomic<double> runtime_offset_x_mm_{0.0};
-  std::atomic<double> runtime_offset_y_mm_{0.0};
+  double pose_report_average_seconds_{5.0};
   mutable std::mutex average_mutex_;
   bool average_active_{false};
-  AveragePurpose average_purpose_{AveragePurpose::kReportOnly};
-  PointMm average_target_;
   std::string average_reason_;
   std::uint64_t average_start_ms_{0};
   std::size_t average_count_{0};
@@ -638,7 +479,6 @@ private:
   double average_sum_cos_yaw_{0.0};
 
   std::atomic<bool> localization_confirmed_{false};
-  std::atomic<bool> have_pose_{false};
 
   std::thread keyboard_thread_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;

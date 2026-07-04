@@ -56,11 +56,11 @@ source /opt/ros/humble/setup.bash
 source "${PROJECT_ROOT}/install/setup.bash"
 set -u
 
-printf '寻点调试模式：\n  [1] 纯里程计 + fallback 坐标纠正\n  [2] 预制地图重定位\n'
+printf '寻点调试模式：\n  [1] 纯里程计原始输出（仅固定二维车体外参）\n  [2] 预制地图重定位\n'
 read -r -p "请选择: " mode_choice
 case "$mode_choice" in
-  1) MODE=fallback; ODOM_TOPIC=/Odometry; ZONE=blue; GAME=normal; MAP_DIR="" ;;
-  2) MODE=localization; ODOM_TOPIC=/r2/global_odometry; GAME=normal ;;
+  1) MODE=odometry; ODOM_TOPIC=/Odometry; ZONE=blue; MAP_DIR="" ;;
+  2) MODE=localization; ODOM_TOPIC=/r2/global_odometry ;;
   *) echo "选择无效" >&2; exit 1 ;;
 esac
 if [[ "$MODE" == localization ]]; then
@@ -94,7 +94,7 @@ printf '%b\n' "${YELLOW}本脚本不启动 r2_serial，不会向 MCU 下发位�
 
 set +e
 ros2 run fast_lio simple_odom --ros-args \
-  -p mode:="$MODE" -p game:="$GAME" -p zone:="$ZONE" \
+  -p mode:="$MODE" -p zone:="$ZONE" \
   -p odom_topic:="$ODOM_TOPIC" \
   -p localized_topic:=/r2/localized
 status=$?
