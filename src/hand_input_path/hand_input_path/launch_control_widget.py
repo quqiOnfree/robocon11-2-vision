@@ -48,7 +48,7 @@ class LaunchControlWidget(QDialog):
         layout.addWidget(set_zone_btn)
 
         # 开始命令按钮（红色醒目）
-        start_btn = QPushButton("开始命令")
+        start_btn = QPushButton("开始比赛命令")
         start_btn.setFixedHeight(80)
         start_btn.setStyleSheet(
             "background-color: red; color: white; font-size: 20px; font-weight: bold;"

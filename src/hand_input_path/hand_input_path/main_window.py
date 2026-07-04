@@ -19,9 +19,11 @@ from PySide6.QtGui import QColor
 try:
     from .block_item import BlockLevel, BlockItem, BlockType
     from .launch_control_widget import LaunchControlWidget
+    from .lidar_panel_widget import LidarPanelWidget
 except ImportError:
     from block_item import BlockLevel, BlockItem, BlockType
     from launch_control_widget import LaunchControlWidget
+    from lidar_panel_widget import LidarPanelWidget
 
 
 class MainWindow(QMainWindow):
@@ -49,7 +51,6 @@ class MainWindow(QMainWindow):
         self.debug_mode = False
 
         self.create_side_panel()
-        self.create_lidar_panel()
         self.create_menu()
         self.change_scene(0)  # 默认加载蓝色场景
 
@@ -144,26 +145,11 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
                            self.right_dock)
 
-    def create_lidar_panel(self):
-        self.left_dock = QDockWidget("lidar panel", self)
-        widget = QWidget(self)
-        layout = QVBoxLayout(widget)
-
-        self.lidar_pos_label = QLabel(
-            "lidar position: (null, null, null)", widget)
-        layout.addWidget(self.lidar_pos_label)
-
-        self.left_dock.setWidget(widget)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea,
-                           self.left_dock)
-        self.left_dock.setVisible(False)
-
     def create_menu(self):
         self.toolbar = self.addToolBar("toolbar")
 
         self.lidar_panel_action = self.toolbar.addAction("lidar panel")
-        self.lidar_panel_action.triggered.connect(
-            lambda: self.left_dock.setVisible(True))
+        self.lidar_panel_action.triggered.connect(self._open_lidar_panel)
 
         self.grid_panel_action = self.toolbar.addAction("grid panel")
         self.grid_panel_action.triggered.connect(
@@ -194,11 +180,6 @@ class MainWindow(QMainWindow):
                 is_path = [row, col + 1] in path_data
                 self.grid_items[row][col].update_path_status(is_path)
 
-    @Slot(int, int, int)
-    def update_lidar_position(self, x_mm: int, y_mm: int, yaw_degree: int):
-        self.lidar_pos_label.setText(
-            f"lidar position: ({x_mm}, {y_mm}, {yaw_degree})")
-
     def set_selected_type(self, new_type: BlockType):
         selected_items = self.graphics_scene.selectedItems()
         for item in selected_items:
@@ -211,6 +192,22 @@ class MainWindow(QMainWindow):
     def _open_launch_control(self):
         self.launch_control_dialog = LaunchControlWidget(self)
         self.launch_control_dialog.show()
+
+    def _open_lidar_panel(self):
+        self.lidar_panel_dialog = LidarPanelWidget(self)
+        if self.ros_node:
+            sig = self.ros_node.path_signal
+            sig.lidar_position_signal.connect(
+                self.lidar_panel_dialog.update_lidar_position)
+            sig.odom_signal.connect(
+                self.lidar_panel_dialog.update_odom)
+            sig.localization_signal.connect(
+                self.lidar_panel_dialog.update_localization)
+            sig.connection_signal.connect(
+                self.lidar_panel_dialog.update_connection)
+            sig.mcu_event_signal.connect(
+                self.lidar_panel_dialog.update_mcu_event)
+        self.lidar_panel_dialog.show()
 
     def change_scene(self, scene_index: int):
         if scene_index == self.scene_index:
