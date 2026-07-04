@@ -47,6 +47,10 @@ inline constexpr std::uint16_t kPathNoCommand = 0x031B;
 inline constexpr std::uint16_t kPathTurnAround180 = 0x031C;
 inline constexpr std::uint16_t kPathRequestNextNew = 0x031D;
 
+// 上位机 -> 下位机：启动控制命令。0x0401 设置启动时应执行的区域，0x0402 开始执行。
+inline constexpr std::uint16_t kSetStartZone = 0x0401;
+inline constexpr std::uint16_t kStartCommand = 0x0402;
+
 // STM32 payload 里的 int16_t 使用小端序；协议头、长度、code、CRC 仍是大端序。
 inline void appendInt16Le(std::vector<std::uint8_t> &payload,
                           std::int16_t value) {

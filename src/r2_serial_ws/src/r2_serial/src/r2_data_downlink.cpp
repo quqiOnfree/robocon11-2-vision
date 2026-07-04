@@ -154,6 +154,11 @@ private:
     path_turn_around_180_topic_ = declare_parameter<std::string>(
       "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
 
+    set_start_zone_topic_ = declare_parameter<std::string>(
+        "topics.set_start_zone", "/r2_serial/downlink/set_start_zone");
+    start_command_topic_ = declare_parameter<std::string>(
+        "topics.start_command", "/r2_serial/downlink/start_command");
+
     uplink_packet_topic_ = declare_parameter<std::string>(
         "topics.uplink_packet", "/r2_serial/uplink/packet");
     uplink_packet_r2_topic_ = declare_parameter<std::string>(
@@ -321,6 +326,17 @@ private:
         path_no_command_topic_, protocol::kPathNoCommand, false);
     path_turn_around_180_sub_ = createEmptyCommandSubscription(
         path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
+
+    set_start_zone_sub_ = create_subscription<std_msgs::msg::UInt16>(
+        set_start_zone_topic_, 10,
+        [this](const std_msgs::msg::UInt16::SharedPtr msg) {
+          std::vector<std::uint8_t> payload;
+          protocol::appendInt16Le(payload, static_cast<std::int16_t>(msg->data));
+          sendPacket(protocol::kSetStartZone, payload, false);
+        });
+
+    start_command_sub_ = createEmptyCommandSubscription(
+        start_command_topic_, protocol::kStartCommand, false);
 
     if (!pose_odom_topic_.empty()) {
       pose_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -634,6 +650,9 @@ private:
   std::string path_no_command_topic_;
   std::string path_turn_around_180_topic_;
 
+  std::string set_start_zone_topic_;
+  std::string start_command_topic_;
+
   std::string uplink_packet_topic_;
   std::string uplink_packet_r2_topic_;
   std::string uplink_event_topic_;
@@ -669,6 +688,8 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr set_start_zone_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr start_command_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
 
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
