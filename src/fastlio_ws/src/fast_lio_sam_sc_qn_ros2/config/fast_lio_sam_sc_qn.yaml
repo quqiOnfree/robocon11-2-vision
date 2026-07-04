@@ -13,8 +13,8 @@ fast_lio_sam_sc_qn:
     map_save:
       # /r2/sam/save_map 会导出 poses.csv + keyframes/*.pcd 到该目录。
       directory: /tmp/r2_sam_keyframe_map
-      # 0 表示保存原始局部关键帧点云；需要压缩地图体积时再设为 0.05/0.10。
-      voxel_leaf_size: 0.0
+      # 当前文件直接供定位使用，不照搬师兄仅用于整图导出的 0.30 m；以 0.10 m 保留局部几何。
+      voxel_leaf_size: 0.10
     sync:
       queue_size: 30
       max_stamp_diff_sec: 0.03
@@ -25,10 +25,11 @@ fast_lio_sam_sc_qn:
     loop:
       enable: true
       enable_quatro: true
-      enable_submap_matching: true
+      # 大场地配置沿用师兄策略：Quatro 使用单关键帧对单关键帧，避免动态子图累积。
+      enable_submap_matching: false
       num_submap_keyframes: 10
       min_keyframes: 35
-      voxel_resolution: 0.10
+      voxel_resolution: 0.30
       scancontext_max_correspondence_distance: 35.0
     nano_gicp:
       thread_number: 0
@@ -46,8 +47,8 @@ fast_lio_sam_sc_qn:
       max_correspondences: 500
       max_iterations: 50
       distance_threshold: 35.0
-      fpfh_normal_radius: 0.30
-      fpfh_radius: 0.50
-      noise_bound: 0.10
+      fpfh_normal_radius: 0.90
+      fpfh_radius: 1.50
+      noise_bound: 0.30
       rotation_gnc_factor: 1.40
       rotation_cost_diff_threshold: 0.0001

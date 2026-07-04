@@ -26,34 +26,37 @@ fast_lio_localization_sc_qn:
       qos_reliability: reliable
     cold_start:
       # 融合静止窗口内的多帧扫描，减少 Mid-360 扫描稀疏和动态遮挡影响。
-      accumulation_frames: 20
+      # 师兄原版依赖移动关键帧；这里保留静态冷启动，但减至 10 帧以接近单关键帧密度。
+      accumulation_frames: 10
       max_attempts: 6
       use_position_prior: false
       expected_x_mm: 0.0
       expected_y_mm: 0.0
       position_tolerance_m: 2.0
     keyframe:
-      distance_threshold: 1.0
+      distance_threshold: 1.5
       min_points: 80
     match:
-      timer_hz: 1.0
+      timer_hz: 2.0
       enable_quatro: true
       # 纯全局重定位时建议 false；如果已有靠谱初值，可设 true 限制候选距离。
       enable_distance_gate: false
-      num_submap_keyframes: 2
+      # 当前定位实现会无条件拼目标子图；设为 0 才等价于师兄 Quatro 的单候选关键帧。
+      num_submap_keyframes: 0
       scancontext_num_candidates: 5
-      voxel_resolution: 0.10
-      scancontext_max_correspondence_distance: 30.0
+      # 大场地粗特征尺度：与 0.90/1.50 m FPFH 半径及 0.30 m noise bound 成套使用。
+      voxel_resolution: 0.30
+      scancontext_max_correspondence_distance: 35.0
       scancontext_distance_threshold: 0.40
-      overlap_max_distance: 0.50
+      overlap_max_distance: 0.60
       min_overlap_ratio: 0.30
     nano_gicp:
       thread_number: 0
       correspondences_number: 15
       max_iterations: 32
       ransac_iterations: 5
-      max_correspondence_distance: 2.0
-      fitness_score_threshold: 1.0
+      max_correspondence_distance: 35.0
+      fitness_score_threshold: 1.5
       transformation_epsilon: 0.01
       euclidean_fitness_epsilon: 0.01
       ransac_outlier_rejection_threshold: 1.0
@@ -62,9 +65,9 @@ fast_lio_localization_sc_qn:
       estimate_scale: false
       max_correspondences: 500
       max_iterations: 50
-      distance_threshold: 30.0
-      fpfh_normal_radius: 0.30
-      fpfh_radius: 0.50
+      distance_threshold: 35.0
+      fpfh_normal_radius: 0.90
+      fpfh_radius: 1.50
       noise_bound: 0.30
       rotation_gnc_factor: 1.40
       rotation_cost_diff_threshold: 0.0001
