@@ -147,7 +147,8 @@ protected:
     point start{1, 0};
     point end1{0, 5};
     point end2{2, 5};
-    std::pmr::monotonic_buffer_resource local_pool_resource{256, &pool_resource};
+    std::pmr::monotonic_buffer_resource local_pool_resource{256,
+                                                            &pool_resource};
 
     auto path1 = a_star(map, start, end1);
     auto path2 = a_star(map, start, end2);
@@ -222,13 +223,15 @@ protected:
   a_star_queue_t
   a_star(const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
          const point &start, const point &end) const {
-    std::pmr::monotonic_buffer_resource local_pool_resource{8192, &pool_resource};
+    std::pmr::monotonic_buffer_resource local_pool_resource{8192,
+                                                            &pool_resource};
     std::priority_queue<a_star_queue_t, std::pmr::vector<a_star_queue_t>,
                         compare_a_star_node>
         path{compare_a_star_node{}, &local_pool_resource};
 
     auto get_kfs_type = [&m_map](const point &p) -> kfs_type {
-      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 || p.y >= static_cast<int>(map_height)) {
+      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 ||
+          p.y >= static_cast<int>(map_height)) {
         throw std::out_of_range("Point is out of map bounds");
       }
       return m_map[p.x][p.y];
@@ -250,7 +253,8 @@ protected:
       path.pop();
       const a_star_node current_node = current_path.back();
       if (current_node.p.x == end.x && current_node.p.y == end.y) {
-        return a_star_queue_t{current_path, &pool_resource}; // Found path to the end
+        return a_star_queue_t{current_path,
+                              &pool_resource}; // Found path to the end
       }
 
       for (int i = 0; i < 4; ++i) {
@@ -291,8 +295,10 @@ protected:
               default:
                 break;
               }
-              if (adjacent_point.x >= 0 && adjacent_point.x < static_cast<int>(map_width) &&
-                  adjacent_point.y >= 0 && adjacent_point.y < static_cast<int>(map_height) &&
+              if (adjacent_point.x >= 0 &&
+                  adjacent_point.x < static_cast<int>(map_width) &&
+                  adjacent_point.y >= 0 &&
+                  adjacent_point.y < static_cast<int>(map_height) &&
                   get_kfs_type(adjacent_point) == kfs_type::r2kfs &&
                   !next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y]) {
                 next_node.walked_r2kfs[adjacent_point.x][adjacent_point.y] =
@@ -395,7 +401,8 @@ protected:
       }
     };
 
-    std::pmr::monotonic_buffer_resource local_pool_resource{1024, &pool_resource};
+    std::pmr::monotonic_buffer_resource local_pool_resource{1024,
+                                                            &pool_resource};
 
     std::queue<point_with_direction,
                std::deque<point_with_direction, std::pmr::polymorphic_allocator<
@@ -403,11 +410,12 @@ protected:
         directions{&local_pool_resource};
     std::set<point, point_compare, std::pmr::polymorphic_allocator<point>>
         must_be_walked_points{&local_pool_resource};
-    std::size_t r2kfs_must_be_grabed = 0;
+    std::size_t r2kfs_must_be_grabed = initial_grabbed_r2_kfs;
     auto local_map = m_map;
 
     auto get_kfs_type = [&m_map](const point &p) -> kfs_type {
-      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 || p.y >= static_cast<int>(map_height)) {
+      if (p.x < 0 || p.x >= static_cast<int>(map_width) || p.y < 0 ||
+          p.y >= static_cast<int>(map_height)) {
         throw std::out_of_range("Point is out of map bounds");
       }
       return m_map[p.x][p.y];
@@ -440,7 +448,8 @@ protected:
 
     point_with_direction current = {initial_node.p, initial_direction};
     local_map = m_map;
-    std::size_t ext_r2kfs_count = initial_grabbed_r2_kfs;
+    std::size_t ext_r2kfs_count = 0;
+    std::size_t r2kfs_grabbed = initial_grabbed_r2_kfs;
 
     while (!directions.empty()) {
       point_with_direction next = directions.front();
@@ -521,8 +530,10 @@ protected:
           };
           break;
         }
-        if (adjacent_point.x < 0 || adjacent_point.x >= static_cast<int>(map_width) ||
-            adjacent_point.y < 0 || adjacent_point.y >= static_cast<int>(map_height)) {
+        if (adjacent_point.x < 0 ||
+            adjacent_point.x >= static_cast<int>(map_width) ||
+            adjacent_point.y < 0 ||
+            adjacent_point.y >= static_cast<int>(map_height)) {
           return std::nullopt; // Out of bounds
         }
         return adjacent_point;
@@ -530,8 +541,10 @@ protected:
 
       auto get_kfs = [&](point p) {
         point adjacent_point = p;
-        if (adjacent_point.x < 0 || adjacent_point.x >= static_cast<int>(map_width) ||
-            adjacent_point.y < 0 || adjacent_point.y >= static_cast<int>(map_height)) {
+        if (adjacent_point.x < 0 ||
+            adjacent_point.x >= static_cast<int>(map_width) ||
+            adjacent_point.y < 0 ||
+            adjacent_point.y >= static_cast<int>(map_height)) {
           return kfs_type::empty;
         }
         return local_map[p.x][p.y];
@@ -564,64 +577,33 @@ protected:
         }
       };
 
-      if (up.has_value() &&
-          (must_be_walked_points.find(up.value()) !=
-               must_be_walked_points.end() ||
-           (ext_r2kfs_count + r2kfs_must_be_grabed <
-            max_r2kfs_can_be_grabed)) &&
-          get_kfs(up.value()) == kfs_type::r2kfs) {
-        gen_grab_command({up.value().x, up.value().y});
-        local_map[up.value().x][up.value().y] = kfs_type::empty;
-        if (must_be_walked_points.find(up.value()) ==
-            must_be_walked_points.end()) {
-          ++ext_r2kfs_count;
+      auto update_commands = [&](const std::optional<point> &op) {
+        if (!op.has_value()) {
+          return;
         }
-      }
-      if (left.has_value() &&
-          (must_be_walked_points.find(left.value()) !=
-               must_be_walked_points.end() ||
-           (ext_r2kfs_count + r2kfs_must_be_grabed <
-            max_r2kfs_can_be_grabed)) &&
-          get_kfs(left.value()) == kfs_type::r2kfs) {
-        commands.push(command::turn_left);
-        gen_grab_command({left.value().x, left.value().y});
-        commands.push(command::turn_right);
-        local_map[left.value().x][left.value().y] = kfs_type::empty;
-        if (must_be_walked_points.find(left.value()) ==
-            must_be_walked_points.end()) {
-          ++ext_r2kfs_count;
+        point p = op.value();
+        if ((must_be_walked_points.find(p) != must_be_walked_points.end() ||
+             (ext_r2kfs_count + r2kfs_must_be_grabed <
+              max_r2kfs_can_be_grabed)) &&
+            get_kfs(p) == kfs_type::r2kfs) {
+          gen_grab_command(p);
+          local_map[p.x][p.y] = kfs_type::empty;
+          ++r2kfs_grabbed;
+          if (must_be_walked_points.find(p) == must_be_walked_points.end()) {
+            ++ext_r2kfs_count;
+          }
+          if (r2kfs_must_be_grabed > max_r2kfs_can_be_grabed &&
+                     r2kfs_grabbed >= max_r2kfs_can_be_grabed &&
+                     r2kfs_grabbed != r2kfs_must_be_grabed) {
+            commands.push(command::release_r2_kfs_and_grab_newer_r2_kfs);
+          }
         }
-      }
-      if (right.has_value() &&
-          (must_be_walked_points.find(right.value()) !=
-               must_be_walked_points.end() ||
-           (ext_r2kfs_count + r2kfs_must_be_grabed <
-            max_r2kfs_can_be_grabed)) &&
-          get_kfs(right.value()) == kfs_type::r2kfs) {
-        commands.push(command::turn_right);
-        gen_grab_command({right.value().x, right.value().y});
-        commands.push(command::turn_left);
-        local_map[right.value().x][right.value().y] = kfs_type::empty;
-        if (must_be_walked_points.find(right.value()) ==
-            must_be_walked_points.end()) {
-          ++ext_r2kfs_count;
-        }
-      }
-      if (down.has_value() &&
-          (must_be_walked_points.find(down.value()) !=
-               must_be_walked_points.end() ||
-           (ext_r2kfs_count + r2kfs_must_be_grabed <
-            max_r2kfs_can_be_grabed)) &&
-          get_kfs(down.value()) == kfs_type::r2kfs) {
-        commands.push(command::turn_around);
-        gen_grab_command({down.value().x, down.value().y});
-        commands.push(command::turn_around);
-        local_map[down.value().x][down.value().y] = kfs_type::empty;
-        if (must_be_walked_points.find(down.value()) ==
-            must_be_walked_points.end()) {
-          ++ext_r2kfs_count;
-        }
-      }
+      };
+
+      update_commands(up);
+      update_commands(left);
+      update_commands(right);
+      update_commands(down);
 
       if (current_direction == next_direction) {
         if (current_level == map_level::ground) {
@@ -750,5 +732,5 @@ protected:
 private:
   // std::array<std::array<kfs_type, map_height>, map_width> m_map{};
   inline static std::pmr::synchronized_pool_resource pool_resource{
-    std::pmr::pool_options{16384, 0}, std::pmr::get_default_resource()};
+      std::pmr::pool_options{16384, 0}, std::pmr::get_default_resource()};
 };
