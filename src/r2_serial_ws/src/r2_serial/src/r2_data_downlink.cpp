@@ -576,7 +576,8 @@ private:
     msg.data = std::string(packet.body_data(),
                            packet.body_data() + packet.body_size());
     debug_msg_pub_->publish(msg);
-    RCLCPP_INFO(get_logger(), "MCU debug: %s", msg.data.c_str());
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+                          "MCU debug: %s", msg.data.c_str());
   }
 
   void publishVisionStateCommand(const packet_t &packet) {

@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QPushButton,
 )
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QTextCursor
 from PySide6.QtCore import Qt
 
 MAX_LINES = 500
@@ -45,8 +45,9 @@ class DebugWidget(QDialog):
         if self._line_count > MAX_LINES:
             # 删掉文档开头多余的行
             cursor = self.text_edit.textCursor()
-            cursor.movePosition(cursor.Start)
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
             for _ in range(self._line_count - MAX_LINES):
-                cursor.movePosition(cursor.Down, cursor.KeepAnchor)
+                cursor.movePosition(QTextCursor.MoveOperation.Down,
+                                    QTextCursor.MoveMode.KeepAnchor)
             cursor.removeSelectedText()
             self._line_count = MAX_LINES
