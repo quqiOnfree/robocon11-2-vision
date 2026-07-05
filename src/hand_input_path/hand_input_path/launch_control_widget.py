@@ -65,6 +65,7 @@ class LaunchControlWidget(QDialog):
             ("1区", 0),
             ("2区", 1),
             ("3区（重试区）", 2),
+            ("3区（坡前启动）", 3),
         ]
         for name, value in zones:
             radio = QRadioButton(name)
