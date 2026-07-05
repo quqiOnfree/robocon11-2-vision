@@ -91,10 +91,10 @@ class Ros2Node(Node):
         self.grid_publisher.publish(msg)
         print("Published grid data:", json_data)
 
-    def publish_startup_config(self, area_type: int, begin_type: int):
+    def publish_startup_config(self, area_type: int, begin_type: int) -> bool:
         if self._initial_x is None or self._initial_y is None:
             self.get_logger().warn("尚未收到起点坐标，无法发送启动配置")
-            return
+            return False
         msg = StartupConfig()
         msg.area_type = area_type
         msg.begin_type = begin_type
@@ -104,6 +104,11 @@ class Ros2Node(Node):
         self.get_logger().info(
             f"已发送合并启动配置: area={area_type} begin={begin_type} "
             f"origin=({self._initial_x}, {self._initial_y})")
+        return True
+
+    @property
+    def has_initial_position(self) -> bool:
+        return self._initial_x is not None
 
     def path_received(self, msg: String):
         try:

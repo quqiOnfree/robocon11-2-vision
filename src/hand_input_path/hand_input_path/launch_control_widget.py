@@ -65,8 +65,8 @@ class LaunchControlWidget(QDialog):
         zones = [
             ("1区", 0),
             ("2区", 1),
-            ("3区（重试区）", 2),
-            ("3区（坡前启动）", 3),
+            ("3区（坡前启动）", 2),
+            ("3区（重试区）", 3),
         ]
         for name, value in zones:
             radio = QRadioButton(name)
@@ -78,9 +78,10 @@ class LaunchControlWidget(QDialog):
 
         layout.addSpacing(20)
 
-        # 设置启动区域按钮
+        # 设置启动区域按钮（待实现雷达启动子进程）
         set_zone_btn = QPushButton("设置启动区域")
         set_zone_btn.setFixedHeight(60)
+        set_zone_btn.setToolTip("待实现：启动雷达等子进程")
         set_zone_btn.clicked.connect(self._on_set_zone)
         layout.addWidget(set_zone_btn)
 
@@ -101,7 +102,7 @@ class LaunchControlWidget(QDialog):
         ros_node = getattr(self.parent(), "ros_node", None)
         if ros_node is None:
             return
-        if ros_node._initial_x is None:
+        if not ros_node.has_initial_position:
             QMessageBox.warning(self, "等待中",
                                 "尚未收到起点坐标，请等待定位完成后再开始比赛。")
             return
@@ -115,4 +116,6 @@ class LaunchControlWidget(QDialog):
             return
         dialog = CountdownDialog(3, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            ros_node.publish_startup_config(scene_index, zone)
+            if not ros_node.publish_startup_config(scene_index, zone):
+                QMessageBox.warning(self, "发送失败",
+                                    "启动配置发送失败，请确认已收到起点坐标。")

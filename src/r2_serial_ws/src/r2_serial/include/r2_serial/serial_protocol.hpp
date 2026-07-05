@@ -6,7 +6,13 @@
 
 namespace r2_serial::protocol {
 
-// 上位机 -> 下位机：当前比赛半区，payload 为 int16_t（0=蓝，1=红）。
+// 上位机 -> 下位机：合并启动配置，payload 为 4×int16_t LE。
+//   struct startup_config {
+//     area_type area_type_value;   // 0=blue, 1=red
+//     begin_type begin_type_value; // 0=一区, 1=二区, 2=三区坡前, 3=三区重试
+//     int16_t origin_x;            // 起点 X (mm)
+//     int16_t origin_y;            // 起点 Y (mm)
+//   };
 inline constexpr std::uint16_t kMatchZone = 0x0000;
 inline constexpr std::uint16_t kMatchZoneAck = 0x000A;
 
@@ -50,10 +56,6 @@ inline constexpr std::uint16_t kPathReplaceKfs = 0x031A;
 inline constexpr std::uint16_t kPathNoCommand = 0x031B;
 inline constexpr std::uint16_t kPathTurnAround180 = 0x031C;
 inline constexpr std::uint16_t kPathRequestNextNew = 0x031D;
-
-// 上位机 -> 下位机：启动控制命令。0x0401 设置启动时应执行的区域，0x0402 开始执行。
-inline constexpr std::uint16_t kSetStartZone = 0x0401;
-inline constexpr std::uint16_t kStartCommand = 0x0402;
 
 // 下位机 -> 上位机：调试消息，变长 char 数据。
 inline constexpr std::uint16_t kDebugMessage = 0x0501;

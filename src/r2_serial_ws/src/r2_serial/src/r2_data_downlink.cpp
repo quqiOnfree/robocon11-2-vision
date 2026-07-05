@@ -92,7 +92,6 @@ public:
     initializeSerial(true);
     createInterfaces();
     createReconnectTimer();
-    createMatchZoneTimer();
     startConsoleThread();
 
     RCLCPP_INFO(get_logger(),
@@ -125,11 +124,7 @@ private:
     reconnect_enabled_ = declare_parameter<bool>("reconnect.enabled", true);
     reconnect_interval_ms_ = declare_parameter<int>("reconnect.interval_ms", 1000);
     reconnect_log_every_n_ = declare_parameter<int>("reconnect.log_every_n", 10);
-    match_zone_interval_ms_ = declare_parameter<int>(
-        "match_zone.send_interval_ms", 1000);
 
-    match_zone_topic_ = declare_parameter<std::string>(
-        "topics.match_zone", "/r2/match_zone");
     raw_packet_topic_ = declare_parameter<std::string>(
         "topics.raw_packet", "/r2_serial/downlink/packet");
     raw_packet_r2_topic_ = declare_parameter<std::string>(
@@ -176,6 +171,8 @@ private:
         "topics.path.no_command", "/r2_serial/downlink/path/no_command");
     path_turn_around_180_topic_ = declare_parameter<std::string>(
       "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
+    startup_config_topic_ = declare_parameter<std::string>(
+        "topics.startup_config", "/r2_serial/downlink/startup_config");
 
     uplink_packet_topic_ = declare_parameter<std::string>(
         "topics.uplink_packet", "/r2_serial/uplink/packet");
@@ -337,28 +334,6 @@ private:
     }
   }
 
-  void createMatchZoneTimer() {
-    const int interval_ms = std::max(100, match_zone_interval_ms_);
-    match_zone_timer_ = create_wall_timer(
-        std::chrono::milliseconds(interval_ms),
-        [this]() { sendMatchZone(); });
-    RCLCPP_INFO(get_logger(),
-                "比赛半区 0x0000 确认前周期下发: topic=%s interval=%d ms",
-                match_zone_topic_.c_str(), interval_ms);
-  }
-
-  void sendMatchZone() {
-    if (zone_acked_.load()) {
-      return;
-    }
-    const int zone = match_zone_value_.load();
-    if (zone != 0 && zone != 1) {
-      return;
-    }
-    sendPacket(protocol::kMatchZone,
-               makeInt16Payload(static_cast<std::int16_t>(zone)), false);
-  }
-
   void createInterfaces() {
     createUplinkPacketPublisher(uplink_packet_topic_);
     createUplinkPacketPublisher(uplink_packet_r2_topic_);
@@ -369,24 +344,6 @@ private:
     vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
         vision_weapon_pole_state_topic_, 10);
     debug_msg_pub_ = create_publisher<std_msgs::msg::String>(debug_msg_topic_, 10);
-    match_zone_sub_ = create_subscription<std_msgs::msg::Int8>(
-        match_zone_topic_, rclcpp::QoS(1).transient_local().reliable(),
-        [this](const std_msgs::msg::Int8::SharedPtr msg) {
-          if (msg->data != 0 && msg->data != 1) {
-            RCLCPP_WARN(get_logger(),
-                        "忽略非法比赛半区: %d（应为 0=蓝 或 1=红）",
-                        static_cast<int>(msg->data));
-            return;
-          }
-          const int previous = match_zone_value_.exchange(msg->data);
-          if (previous != msg->data) {
-            zone_acked_.store(false);
-          }
-          RCLCPP_INFO(get_logger(), "比赛半区已更新: %s (%d)",
-                      msg->data == 0 ? "BLUE" : "RED",
-                      static_cast<int>(msg->data));
-          sendMatchZone();
-        });
 
     // 原始包入口：推荐 /r2_serial/downlink/packet，同时兼容旧 /r2/downlink/packet。
     createRawPacketSubscription(raw_packet_topic_);
@@ -442,7 +399,7 @@ private:
         path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
 
     startup_config_sub_ = create_subscription<r2_serial::msg::StartupConfig>(
-        "/r2_serial/downlink/startup_config", 10,
+        startup_config_topic_, 10,
         [this](const r2_serial::msg::StartupConfig::SharedPtr msg) {
           std::vector<std::uint8_t> payload;
           payload.reserve(8);
@@ -625,25 +582,7 @@ private:
     return true;
   }
 
-  void handleMatchZoneAck(const packet_t &packet) {
-    if (packet.code() != protocol::kMatchZoneAck) {
-      return;
-    }
-    if (packet.body_size() != 0) {
-      RCLCPP_WARN(get_logger(),
-                  "忽略格式错误的半区确认包 0x000A：payload 应为空，实际=%u bytes",
-                  packet.body_size());
-      return;
-    }
-    if (!zone_acked_.exchange(true)) {
-      RCLCPP_INFO(
-          get_logger(),
-          "\033[1;32m[R2 Serial] 半区下发已收到 MCU 确认 (0x000A) !\033[0m");
-    }
-  }
-
   void publishUplinkPacket(const packet_t &packet) {
-    handleMatchZoneAck(packet);
     r2_serial::msg::SerialPacket msg;
     msg.code = packet.code();
     msg.payload.assign(packet.body_data(), packet.body_data() + packet.body_size());
@@ -792,7 +731,6 @@ private:
   std::deque<std::string> uplink_history_;
   std::atomic<bool> serial_connected_{false};
   rclcpp::TimerBase::SharedPtr reconnect_timer_;
-  rclcpp::TimerBase::SharedPtr match_zone_timer_;
 
   std::string serial_port_;
   bool serial_debug_raw_{false};
@@ -804,11 +742,8 @@ private:
   bool reconnect_enabled_{true};
   int reconnect_interval_ms_{1000};
   int reconnect_log_every_n_{10};
-  int match_zone_interval_ms_{1000};
-  std::atomic<int> match_zone_value_{-1};
-  std::atomic<bool> zone_acked_{false};
 
-  std::string match_zone_topic_;
+  std::string startup_config_topic_;
   std::string raw_packet_topic_;
   std::string raw_packet_r2_topic_;
   std::string raw_packet_legacy_topic_;
@@ -874,7 +809,6 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
   rclcpp::Subscription<r2_serial::msg::StartupConfig>::SharedPtr startup_config_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
-  rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr match_zone_sub_;
 
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
   std::vector<rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr> uplink_event_pubs_;
