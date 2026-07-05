@@ -43,6 +43,9 @@ inline static void print_command(const Node* node, path_planning::command cmd) {
   case path_planning::command::turn_around:
     RCLCPP_INFO(node->get_logger(), "Turn Around");
     break;
+  case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
+    RCLCPP_INFO(node->get_logger(), "Release and grab newer R2 KFS");
+    break;
   case path_planning::command::complete_task:
     RCLCPP_INFO(node->get_logger(), "Complete task");
     break;
@@ -124,6 +127,9 @@ public:
       break;
     case path_planning::command::turn_around:
       path_turn_around_pub_->publish(msg);
+      break;
+    case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
+      path_replace_kfs_pub_->publish(msg);
       break;
     default:
       path_no_command_pub_->publish(msg);
