@@ -169,7 +169,8 @@ public:
       path_planning::command cmd{path_planning::command::complete_task};
       {
         std::lock_guard<std::mutex> lock(command_array_mutex_);
-        if (command_array_.empty()) {
+        if (command_array_.empty() ||
+            command_array_index_ >= command_array_.size()) {
           cmd = path_planning::command::complete_task;
         } else {
           cmd = command_array_[command_array_index_++];

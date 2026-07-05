@@ -167,7 +167,8 @@ private:
     void clearPendingWrites() {
       auto self = shared_from_this();
       asio::post(strand, [self]() {
-        self->write_timer.cancel();
+        std::error_code ignored;
+        self->write_timer.cancel(ignored);
         self->dropPendingWrites(true);
       });
     }
@@ -185,7 +186,8 @@ private:
         return;
       }
 
-      // 统一串口限速：不管 ROS 哪个节点发来的包，最终写串口前都从这里排队。
+      // 历史 10 ms 包间限速保留在这里，当前关闭。异步写队列依旧串行。
+#if 0
       if (min_write_interval.count() > 0 && have_last_write_time) {
         const auto now = std::chrono::steady_clock::now();
         const auto earliest = last_write_time + min_write_interval;
@@ -204,6 +206,7 @@ private:
 
       last_write_time = std::chrono::steady_clock::now();
       have_last_write_time = true;
+#endif
 
       write_in_progress = true;
 
@@ -291,7 +294,7 @@ private:
         return;
       }
       std::error_code ignored;
-      write_timer.cancel();
+      write_timer.cancel(ignored);
       serial_port.cancel(ignored);
       serial_port.close(ignored);
       dropPendingWrites();
@@ -319,7 +322,7 @@ private:
         return;
       }
       std::error_code ignored;
-      write_timer.cancel();
+      write_timer.cancel(ignored);
       serial_port.cancel(ignored);
       serial_port.close(ignored);
     }

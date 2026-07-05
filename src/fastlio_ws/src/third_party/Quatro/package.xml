@@ -1,0 +1,23 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>quatro</name>
+  <version>1.0.0</version>
+  <description>ROS 2 ament wrapper for Quatro robust registration.</description>
+
+  <maintainer email="robocon@example.com">GDUT Robocon</maintainer>
+  <license>GPL-3.0-only</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>eigen</build_depend>
+  <build_depend>libpcl-all-dev</build_depend>
+  <build_depend>teaserpp</build_depend>
+  <build_depend>tbb</build_depend>
+  <exec_depend>eigen</exec_depend>
+  <exec_depend>libpcl-all-dev</exec_depend>
+  <exec_depend>teaserpp</exec_depend>
+  <exec_depend>tbb</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

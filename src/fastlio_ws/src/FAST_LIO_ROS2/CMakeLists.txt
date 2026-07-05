@@ -131,38 +131,6 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
-add_executable(map_saver src/map_saver.cpp)
-ament_target_dependencies(map_saver rclcpp sensor_msgs pcl_conversions)
-target_link_libraries(map_saver ${PCL_LIBRARIES})
-install(TARGETS map_saver DESTINATION lib/${PROJECT_NAME})
-
-add_executable(r2_localizer
-  src/r2_localizer_node.cpp
-  src/MapManager.cpp
-  src/OdomSynchronizer.cpp
-  src/NDTAligner.cpp
-  src/FieldMapTransform.cpp
-)
-target_include_directories(r2_localizer PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${PCL_INCLUDE_DIRS}
-)
-ament_target_dependencies(r2_localizer rclcpp sensor_msgs geometry_msgs nav_msgs std_msgs std_srvs tf2_ros pcl_conversions)
-target_link_libraries(r2_localizer ${PCL_LIBRARIES} Eigen3::Eigen)
-install(TARGETS r2_localizer DESTINATION lib/${PROJECT_NAME})
-
-add_executable(r2_kfs_detector
-  src/r2_kfs_detector.cpp
-  src/MapManager.cpp
-)
-target_include_directories(r2_kfs_detector PUBLIC
-  ${CMAKE_CURRENT_SOURCE_DIR}/include
-  ${PCL_INCLUDE_DIRS}
-)
-ament_target_dependencies(r2_kfs_detector rclcpp sensor_msgs std_msgs visualization_msgs geometry_msgs tf2 tf2_ros pcl_conversions)
-target_link_libraries(r2_kfs_detector ${PCL_LIBRARIES} Eigen3::Eigen)
-install(TARGETS r2_kfs_detector DESTINATION lib/${PROJECT_NAME})
-
 add_executable(simple_odom src/simple_odom.cpp)
 target_include_directories(simple_odom PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -170,7 +138,7 @@ target_include_directories(simple_odom PRIVATE
 )
 target_compile_features(simple_odom PRIVATE cxx_std_20)
 target_link_libraries(simple_odom Threads::Threads)
-ament_target_dependencies(simple_odom rclcpp nav_msgs tf2 std_msgs r2_serial)
+ament_target_dependencies(simple_odom rclcpp nav_msgs tf2 std_msgs std_srvs r2_serial)
 install(TARGETS simple_odom DESTINATION lib/${PROJECT_NAME})
 
 

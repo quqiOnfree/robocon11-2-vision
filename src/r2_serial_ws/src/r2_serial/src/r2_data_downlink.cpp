@@ -2,6 +2,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
+#include <std_msgs/msg/int8.hpp>
 #include <std_msgs/msg/u_int16.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -10,9 +11,13 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <deque>
 #include <iomanip>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -31,6 +36,13 @@
 namespace protocol = r2_serial::protocol;
 
 namespace {
+
+std::vector<std::uint8_t> makeInt16Payload(std::int16_t value) {
+  std::vector<std::uint8_t> payload;
+  payload.reserve(2);
+  protocol::appendInt16Le(payload, value);
+  return payload;
+}
 
 std::vector<std::uint8_t> makeNavPayload(std::int16_t x_mm,
                                          std::int16_t y_mm,
@@ -78,12 +90,15 @@ public:
     initializeSerial(true);
     createInterfaces();
     createReconnectTimer();
+    createMatchZoneTimer();
+    startConsoleThread();
 
     RCLCPP_INFO(get_logger(),
-                "R2 serial bridge ready: serial=%s, raw_downlink=%s, raw_uplink=%s, pose_odom=%s",
+                "R2 串口收发节点已启动: 串口=%s, 下发话题=%s, 回传话题=%s, 里程计转发=%s",
                 serial_port_.c_str(), raw_packet_topic_.c_str(),
                 uplink_packet_topic_.c_str(),
-                pose_odom_topic_.empty() ? "<disabled>" : pose_odom_topic_.c_str());
+                pose_odom_topic_.empty() ? "<关闭>" : pose_odom_topic_.c_str());
+    RCLCPP_INFO(get_logger(), "串口节点控制台: 输入 L n 可查看最近 n 条下位机回传包");
   }
 
   ~R2DataDownlinkNode() override {
@@ -100,13 +115,19 @@ private:
     // 所有话题都做成参数，后续联调时可以 launch 覆盖，不需要改源码。
     serial_port_ = declare_parameter<std::string>("serial_port", "/dev/ttyACM0");
     serial_debug_raw_ = declare_parameter<bool>("serial_debug_raw", false);
-    write_rate_limit_enabled_ = declare_parameter<bool>("write_rate_limit.enabled", true);
+    write_rate_limit_enabled_ = declare_parameter<bool>("write_rate_limit.enabled", false);
     write_min_interval_ms_ = declare_parameter<int>("write_rate_limit.min_interval_ms", 10);
     debug_print_pose_tx_ = declare_parameter<bool>("debug.print_pose_tx", false);
-    debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 5000);
+    debug_pose_tx_summary_ms_ = declare_parameter<int>("debug.pose_tx_summary_ms", 20000);
+    debug_drop_summary_every_n_ = declare_parameter<int>("debug.drop_summary_every_n", 50);
     reconnect_enabled_ = declare_parameter<bool>("reconnect.enabled", true);
     reconnect_interval_ms_ = declare_parameter<int>("reconnect.interval_ms", 1000);
+    reconnect_log_every_n_ = declare_parameter<int>("reconnect.log_every_n", 10);
+    match_zone_interval_ms_ = declare_parameter<int>(
+        "match_zone.send_interval_ms", 1000);
 
+    match_zone_topic_ = declare_parameter<std::string>(
+        "topics.match_zone", "/r2/match_zone");
     raw_packet_topic_ = declare_parameter<std::string>(
         "topics.raw_packet", "/r2_serial/downlink/packet");
     raw_packet_r2_topic_ = declare_parameter<std::string>(
@@ -181,10 +202,15 @@ private:
 
     try {
       auto connector = std::make_shared<SerialConnector>(serial_port_, io_context_);
+      // 历史限速开关保留，当前封版关闭额外包间等待。asio::async_write
+      // 仍保证同一时刻只有一个完整数据包写入，不会发生帧字节交错。
+#if 0
       const int interval_ms = write_rate_limit_enabled_
                                   ? std::max(0, write_min_interval_ms_)
                                   : 0;
       connector->setMinWriteInterval(std::chrono::milliseconds(interval_ms));
+#endif
+      const int interval_ms = 0;
       connector->setErrorHandler([this](std::error_code ec) {
         handleSerialError(ec);
       });
@@ -200,6 +226,8 @@ private:
         std::lock_guard<std::mutex> lock(serial_mutex_);
         serial_connector_ = std::move(connector);
         serial_connected_.store(true);
+        reconnect_failure_count_.store(0);
+        disconnected_drop_count_.store(0);
       }
 
       if (!io_context_thread_.joinable()) {
@@ -219,8 +247,14 @@ private:
         RCLCPP_ERROR(get_logger(), "串口启动失败: %s (%s)，等待自动重连",
                      serial_port_.c_str(), ex.what());
       } else {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 5000,
-                             "串口重连失败: %s (%s)", serial_port_.c_str(), ex.what());
+        const auto attempts = reconnect_failure_count_.fetch_add(1) + 1;
+        const auto log_every = std::max(1, reconnect_log_every_n_);
+        if (attempts % static_cast<std::uint64_t>(log_every) == 0) {
+          RCLCPP_WARN(get_logger(),
+                      "串口仍未恢复: %s (%s)，已重试 %llu 次",
+                      serial_port_.c_str(), ex.what(),
+                      static_cast<unsigned long long>(attempts));
+        }
       }
     }
   }
@@ -238,6 +272,46 @@ private:
           }
         });
     RCLCPP_INFO(get_logger(), "串口自动重连: 开启，间隔=%d ms", interval_ms);
+  }
+
+  void startConsoleThread() {
+    console_thread_ = std::thread(&R2DataDownlinkNode::consoleLoop, this);
+    console_thread_.detach();
+  }
+
+  void consoleLoop() {
+    std::string line;
+    while (rclcpp::ok() && std::getline(std::cin, line)) {
+      if (line.empty()) {
+        continue;
+      }
+      const char cmd = static_cast<char>(
+          std::tolower(static_cast<unsigned char>(line.front())));
+      if (cmd == 'l') {
+        printRecentUplink(line);
+      } else {
+        std::printf("\n[r2_serial] 当前只支持 L n：查看最近 n 条下位机回传包。\n");
+      }
+    }
+  }
+
+  void printRecentUplink(const std::string &line) {
+    int count = 10;
+    std::sscanf(line.c_str(), "%*c %d", &count);
+    count = std::max(1, std::min(count, 100));
+
+    std::lock_guard<std::mutex> lock(uplink_history_mutex_);
+    std::printf("\n========== [最近 %d 条下位机回传包] ==========\n", count);
+    if (uplink_history_.empty()) {
+      std::printf("  暂无回传包。请确认下位机已发送 AA55...55AA 协议包，且串口连接正常。\n");
+    } else {
+      int printed = 0;
+      for (auto it = uplink_history_.rbegin();
+           it != uplink_history_.rend() && printed < count; ++it, ++printed) {
+        std::printf("  %s\n", it->c_str());
+      }
+    }
+    std::printf("=============================================\n");
   }
 
   void handleSerialError(const std::error_code &ec) {
@@ -259,6 +333,28 @@ private:
     }
   }
 
+  void createMatchZoneTimer() {
+    const int interval_ms = std::max(100, match_zone_interval_ms_);
+    match_zone_timer_ = create_wall_timer(
+        std::chrono::milliseconds(interval_ms),
+        [this]() { sendMatchZone(); });
+    RCLCPP_INFO(get_logger(),
+                "比赛半区 0x0000 确认前周期下发: topic=%s interval=%d ms",
+                match_zone_topic_.c_str(), interval_ms);
+  }
+
+  void sendMatchZone() {
+    if (zone_acked_.load()) {
+      return;
+    }
+    const int zone = match_zone_value_.load();
+    if (zone != 0 && zone != 1) {
+      return;
+    }
+    sendPacket(protocol::kMatchZone,
+               makeInt16Payload(static_cast<std::int16_t>(zone)), false);
+  }
+
   void createInterfaces() {
     createUplinkPacketPublisher(uplink_packet_topic_);
     createUplinkPacketPublisher(uplink_packet_r2_topic_);
@@ -268,6 +364,24 @@ private:
     path_request_new_pub_ = create_publisher<std_msgs::msg::UInt16>(path_request_new_topic_, 10);
     vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
         vision_weapon_pole_state_topic_, 10);
+    match_zone_sub_ = create_subscription<std_msgs::msg::Int8>(
+        match_zone_topic_, rclcpp::QoS(1).transient_local().reliable(),
+        [this](const std_msgs::msg::Int8::SharedPtr msg) {
+          if (msg->data != 0 && msg->data != 1) {
+            RCLCPP_WARN(get_logger(),
+                        "忽略非法比赛半区: %d（应为 0=蓝 或 1=红）",
+                        static_cast<int>(msg->data));
+            return;
+          }
+          const int previous = match_zone_value_.exchange(msg->data);
+          if (previous != msg->data) {
+            zone_acked_.store(false);
+          }
+          RCLCPP_INFO(get_logger(), "比赛半区已更新: %s (%d)",
+                      msg->data == 0 ? "BLUE" : "RED",
+                      static_cast<int>(msg->data));
+          sendMatchZone();
+        });
 
     // 原始包入口：推荐 /r2_serial/downlink/packet，同时兼容旧 /r2/downlink/packet。
     createRawPacketSubscription(raw_packet_topic_);
@@ -419,7 +533,7 @@ private:
     const auto yaw_deg = checkedInt16(std::lround(yaw * 180.0 / M_PI));
     if (!x_mm || !y_mm || !yaw_deg) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                           "Odometry pose exceeds int16 payload range; skip 0x0101");
+                           "里程计位置超出 int16 下发范围，跳过 0x0101");
       return;
     }
     sendPacket(protocol::kPoseUpdate, makeNavPayload(*x_mm, *y_mm, *yaw_deg), false);
@@ -438,28 +552,28 @@ private:
 
     const bool log_tx_detail =
         serial_debug_raw_ && (debug_print_pose_tx_ || code != protocol::kPoseUpdate);
-    if (log_tx_detail) {
-      std::vector<std::uint8_t> bytes(packet->begin(), packet->end());
-      RCLCPP_INFO(get_logger(), "串口原始发送: code=0x%04x %zu bytes [%s]",
-                  code, bytes.size(), bytesToHex(bytes.data(), bytes.size()).c_str());
-    } else if (serial_debug_raw_ && code == protocol::kPoseUpdate) {
-      const auto hidden = suppressed_pose_tx_count_.fetch_add(1) + 1;
-      RCLCPP_INFO_THROTTLE(
-          get_logger(), *get_clock(), debug_pose_tx_summary_ms_,
-          "调试日志已隐藏 0x0101 位置下发包，累计=%llu；如需完整打印，设置 debug_print_pose_tx:=true",
-          static_cast<unsigned long long>(hidden));
-    }
 
     std::shared_ptr<SerialConnector> connector;
     {
       std::lock_guard<std::mutex> lock(serial_mutex_);
       if (!serial_connector_ || !serial_connected_.load()) {
         tx_failure_count_.fetch_add(1);
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-                             "Serial is not ready; drop code=0x%04x", code);
+        const auto dropped = disconnected_drop_count_.fetch_add(1) + 1;
+        const auto log_every = std::max(1, debug_drop_summary_every_n_);
+        if (dropped % static_cast<std::uint64_t>(log_every) == 0) {
+          RCLCPP_WARN(get_logger(),
+                      "串口未连接，已丢弃 %llu 个下发包，最近丢弃 code=0x%04x",
+                      static_cast<unsigned long long>(dropped), code);
+        }
         return false;
       }
       connector = serial_connector_;
+    }
+
+    if (log_tx_detail) {
+      std::vector<std::uint8_t> bytes(packet->begin(), packet->end());
+      RCLCPP_INFO(get_logger(), "串口原始发送: code=0x%04x %zu bytes [%s]",
+                  code, bytes.size(), bytesToHex(bytes.data(), bytes.size()).c_str());
     }
     if (clear_pending) {
       connector->clearPendingWrites();
@@ -472,6 +586,12 @@ private:
             if (log_tx_detail) {
               RCLCPP_INFO(get_logger(), "串口写入完成: code=0x%04x bytes=%zu",
                           code, bytes_transferred);
+            } else if (serial_debug_raw_ && code == protocol::kPoseUpdate) {
+              const auto hidden = suppressed_pose_tx_count_.fetch_add(1) + 1;
+              RCLCPP_INFO_THROTTLE(
+                  get_logger(), *get_clock(), debug_pose_tx_summary_ms_,
+                  "已隐藏 0x0101 位置下发包详细日志，成功发送累计=%llu；如需完整打印，设置 debug_print_pose_tx:=true",
+                  static_cast<unsigned long long>(hidden));
             }
           } else {
             tx_failure_count_.fetch_add(1);
@@ -485,11 +605,30 @@ private:
     return true;
   }
 
+  void handleMatchZoneAck(const packet_t &packet) {
+    if (packet.code() != protocol::kMatchZoneAck) {
+      return;
+    }
+    if (packet.body_size() != 0) {
+      RCLCPP_WARN(get_logger(),
+                  "忽略格式错误的半区确认包 0x000A：payload 应为空，实际=%u bytes",
+                  packet.body_size());
+      return;
+    }
+    if (!zone_acked_.exchange(true)) {
+      RCLCPP_INFO(
+          get_logger(),
+          "\033[1;32m[R2 Serial] 半区下发已收到 MCU 确认 (0x000A) !\033[0m");
+    }
+  }
+
   void publishUplinkPacket(const packet_t &packet) {
+    handleMatchZoneAck(packet);
     r2_serial::msg::SerialPacket msg;
     msg.code = packet.code();
     msg.payload.assign(packet.body_data(), packet.body_data() + packet.body_size());
     msg.clear_pending = false;
+    recordUplinkHistory(msg);
     for (const auto &pub : uplink_packet_pubs_) {
       pub->publish(msg);
     }
@@ -509,6 +648,24 @@ private:
       RCLCPP_INFO(get_logger(), "收到有效串口包: code=0x%04x payload=[%s] len=%u bytes",
                   packet.code(), payload_hex.empty() ? "<empty>" : payload_hex.c_str(),
                   packet.body_size());
+    }
+  }
+
+  void recordUplinkHistory(const r2_serial::msg::SerialPacket &msg) {
+    std::ostringstream line;
+    line << "code=0x" << std::hex << std::setw(4) << std::setfill('0') << msg.code
+         << std::dec << " payload=[";
+    if (msg.payload.empty()) {
+      line << "<empty>";
+    } else {
+      line << bytesToHex(msg.payload.data(), msg.payload.size());
+    }
+    line << "] len=" << msg.payload.size() << " bytes";
+
+    std::lock_guard<std::mutex> lock(uplink_history_mutex_);
+    uplink_history_.push_back(line.str());
+    while (uplink_history_.size() > 100) {
+      uplink_history_.pop_front();
     }
   }
 
@@ -538,13 +695,13 @@ private:
       return;
     }
     std_msgs::msg::UInt16 msg;
-    std::uint16_t data{};
-    data |= packet.body_data()[0];
-    data |= (packet.body_data()[1] << 8) & 0xFF;
+    const std::uint16_t data =
+        static_cast<std::uint16_t>(packet.body_data()[0]) |
+        (static_cast<std::uint16_t>(packet.body_data()[1]) << 8);
     msg.data = data;
     path_request_new_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s, index=%d",
-                packet.code(), path_request_topic_.c_str(), static_cast<int>(msg.data));
+                packet.code(), path_request_new_topic_.c_str(), static_cast<int>(msg.data));
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
@@ -596,19 +753,29 @@ private:
   asio::executor_work_guard<asio::io_context::executor_type> work_guard_;
   std::shared_ptr<SerialConnector> serial_connector_;
   std::thread io_context_thread_;
+  std::thread console_thread_;
   std::mutex serial_mutex_;
+  std::mutex uplink_history_mutex_;
+  std::deque<std::string> uplink_history_;
   std::atomic<bool> serial_connected_{false};
   rclcpp::TimerBase::SharedPtr reconnect_timer_;
+  rclcpp::TimerBase::SharedPtr match_zone_timer_;
 
   std::string serial_port_;
   bool serial_debug_raw_{false};
-  bool write_rate_limit_enabled_{true};
+  bool write_rate_limit_enabled_{false};
   int write_min_interval_ms_{10};
   bool debug_print_pose_tx_{false};
-  int debug_pose_tx_summary_ms_{5000};
+  int debug_pose_tx_summary_ms_{20000};
+  int debug_drop_summary_every_n_{50};
   bool reconnect_enabled_{true};
   int reconnect_interval_ms_{1000};
+  int reconnect_log_every_n_{10};
+  int match_zone_interval_ms_{1000};
+  std::atomic<int> match_zone_value_{-1};
+  std::atomic<bool> zone_acked_{false};
 
+  std::string match_zone_topic_;
   std::string raw_packet_topic_;
   std::string raw_packet_r2_topic_;
   std::string raw_packet_legacy_topic_;
@@ -645,6 +812,8 @@ private:
   std::atomic<std::uint64_t> tx_success_count_{0};
   std::atomic<std::uint64_t> tx_failure_count_{0};
   std::atomic<std::uint64_t> suppressed_pose_tx_count_{0};
+  std::atomic<std::uint64_t> disconnected_drop_count_{0};
+  std::atomic<std::uint64_t> reconnect_failure_count_{0};
 
   std::vector<std::string> raw_packet_topics_;
   std::vector<std::string> uplink_packet_topics_;
@@ -670,6 +839,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
+  rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr match_zone_sub_;
 
   std::vector<rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr> uplink_packet_pubs_;
   std::vector<rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr> uplink_event_pubs_;

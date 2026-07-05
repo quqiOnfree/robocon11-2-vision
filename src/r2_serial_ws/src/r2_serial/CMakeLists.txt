@@ -17,12 +17,8 @@ find_package(tf2 REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(Threads REQUIRED)
 
-add_library(asio INTERFACE)
-target_include_directories(asio INTERFACE
-  asio/include
-)
-
 rosidl_generate_interfaces(${PROJECT_NAME}
+  msg/InitialPosition.msg
   msg/SerialPacket.msg
 )
 ament_export_dependencies(rosidl_default_runtime)
@@ -32,7 +28,7 @@ add_executable(r2_data_downlink src/r2_data_downlink.cpp)
 target_include_directories(r2_data_downlink PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(r2_data_downlink Threads::Threads asio)
+target_link_libraries(r2_data_downlink Threads::Threads)
 ament_target_dependencies(r2_data_downlink rclcpp std_msgs nav_msgs tf2)
 rosidl_get_typesupport_target(r2_serial_typesupport_target
   ${PROJECT_NAME} "rosidl_typesupport_cpp")
