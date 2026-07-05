@@ -220,6 +220,8 @@ class MainWindow(QMainWindow):
                 self.lidar_panel_dialog.update_connection)
             sig.mcu_event_signal.connect(
                 self.lidar_panel_dialog.update_mcu_event)
+            sig.initial_position_signal.connect(
+                self.lidar_panel_dialog.update_initial_position)
         self.lidar_panel_dialog.show()
 
     def _open_debug_panel(self):
@@ -260,9 +262,6 @@ class MainWindow(QMainWindow):
             ]
             self.graphics_scene.setBackgroundBrush(QColor("lightcoral"))
         self.load_grid(new_grid)
-        # 发布半场设置
-        if self.ros_node:
-            self.ros_node.publish_match_zone(scene_index)
 
     def load_grid(self, grid: list[list[BlockLevel]]):
         self.reset_grid(grid)

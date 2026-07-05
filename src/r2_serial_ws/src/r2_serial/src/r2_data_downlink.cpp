@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "r2_serial/msg/serial_packet.hpp"
+#include "r2_serial/msg/startup_config.hpp"
 #include "r2_serial/serial_connector.hpp"
 #include "r2_serial/serial_protocol.hpp"
 
@@ -175,11 +176,6 @@ private:
         "topics.path.no_command", "/r2_serial/downlink/path/no_command");
     path_turn_around_180_topic_ = declare_parameter<std::string>(
       "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
-
-    set_start_zone_topic_ = declare_parameter<std::string>(
-        "topics.set_start_zone", "/r2_serial/downlink/set_start_zone");
-    start_command_topic_ = declare_parameter<std::string>(
-        "topics.start_command", "/r2_serial/downlink/start_command");
 
     uplink_packet_topic_ = declare_parameter<std::string>(
         "topics.uplink_packet", "/r2_serial/uplink/packet");
@@ -445,16 +441,20 @@ private:
     path_turn_around_180_sub_ = createEmptyCommandSubscription(
         path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
 
-    set_start_zone_sub_ = create_subscription<std_msgs::msg::UInt16>(
-        set_start_zone_topic_, 10,
-        [this](const std_msgs::msg::UInt16::SharedPtr msg) {
+    startup_config_sub_ = create_subscription<r2_serial::msg::StartupConfig>(
+        "/r2_serial/downlink/startup_config", 10,
+        [this](const r2_serial::msg::StartupConfig::SharedPtr msg) {
           std::vector<std::uint8_t> payload;
-          protocol::appendInt16Le(payload, static_cast<std::int16_t>(msg->data));
-          sendPacket(protocol::kSetStartZone, payload, false);
+          payload.reserve(8);
+          protocol::appendInt16Le(payload, msg->area_type);
+          protocol::appendInt16Le(payload, msg->begin_type);
+          protocol::appendInt16Le(payload, msg->origin_x);
+          protocol::appendInt16Le(payload, msg->origin_y);
+          sendPacket(protocol::kMatchZone, payload, false);
+          RCLCPP_INFO(get_logger(),
+              "发送合并启动配置: area=%d begin=%d origin=(%d,%d)",
+              msg->area_type, msg->begin_type, msg->origin_x, msg->origin_y);
         });
-
-    start_command_sub_ = createEmptyCommandSubscription(
-        start_command_topic_, protocol::kStartCommand, false);
 
     if (!pose_odom_topic_.empty()) {
       pose_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
@@ -834,9 +834,6 @@ private:
   std::string path_no_command_topic_;
   std::string path_turn_around_180_topic_;
 
-  std::string set_start_zone_topic_;
-  std::string start_command_topic_;
-
   std::string uplink_packet_topic_;
   std::string uplink_packet_r2_topic_;
   std::string uplink_event_topic_;
@@ -875,8 +872,7 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
-  rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr set_start_zone_sub_;
-  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr start_command_sub_;
+  rclcpp::Subscription<r2_serial::msg::StartupConfig>::SharedPtr startup_config_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Int8>::SharedPtr match_zone_sub_;
 

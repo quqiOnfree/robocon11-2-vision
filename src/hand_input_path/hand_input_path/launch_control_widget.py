@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QRadioButton,
     QButtonGroup,
+    QMessageBox,
 )
 from PySide6.QtGui import QFont
 from PySide6.QtCore import Qt, QTimer
@@ -93,17 +94,25 @@ class LaunchControlWidget(QDialog):
         layout.addWidget(start_btn)
 
     def _on_set_zone(self):
-        zone = self.zone_group.checkedId()
-        if zone < 0:
-            return
-        ros_node = getattr(self.parent(), "ros_node", None)
-        if ros_node is not None:
-            ros_node.publish_set_zone(zone)
+        # TODO: 未来用于启动雷达等子进程
+        pass
 
     def _on_start_command(self):
         ros_node = getattr(self.parent(), "ros_node", None)
         if ros_node is None:
             return
+        if ros_node._initial_x is None:
+            QMessageBox.warning(self, "等待中",
+                                "尚未收到起点坐标，请等待定位完成后再开始比赛。")
+            return
+        scene_index = getattr(self.parent(), "scene_index", -1)
+        if scene_index < 0:
+            QMessageBox.warning(self, "未选择半场",
+                                "请先在主窗口选择蓝色或红色场景！")
+            return
+        zone = self.zone_group.checkedId()
+        if zone < 0:
+            return
         dialog = CountdownDialog(3, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            ros_node.publish_start_command()
+            ros_node.publish_startup_config(scene_index, zone)

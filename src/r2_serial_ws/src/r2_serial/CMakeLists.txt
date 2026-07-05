@@ -20,6 +20,7 @@ find_package(Threads REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/InitialPosition.msg
   msg/SerialPacket.msg
+  msg/StartupConfig.msg
 )
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)

@@ -45,6 +45,24 @@ class LidarPanelWidget(QDialog):
 
         layout.addWidget(loc_group)
 
+        # ── 启动坐标（发布一次，transient_local）──
+        start_pos_group = QGroupBox("启动坐标")
+        start_pos_layout = QHBoxLayout(start_pos_group)
+
+        start_left_col = QVBoxLayout()
+        self.start_x_label = QLabel("X: ---- mm")
+        self.start_x_label.setFont(QFont("Arial", 12))
+        start_left_col.addWidget(self.start_x_label)
+
+        start_right_col = QVBoxLayout()
+        self.start_y_label = QLabel("Y: ---- mm")
+        self.start_y_label.setFont(QFont("Arial", 12))
+        start_right_col.addWidget(self.start_y_label)
+
+        start_pos_layout.addLayout(start_left_col)
+        start_pos_layout.addLayout(start_right_col)
+        layout.addWidget(start_pos_group)
+
         # ── 实时坐标 ──
         coord_group = QGroupBox("实时坐标")
         coord_layout = QHBoxLayout(coord_group)
@@ -117,6 +135,10 @@ class LidarPanelWidget(QDialog):
         else:
             self.connection_label.setText("下发节点: ○ 未连接")
             self.connection_label.setStyleSheet("color: red;")
+
+    def update_initial_position(self, x_mm: int, y_mm: int):
+        self.start_x_label.setText(f"X: {x_mm} mm")
+        self.start_y_label.setText(f"Y: {y_mm} mm")
 
     def update_mcu_event(self, event_code: int):
         desc = EVENT_MAP.get(event_code, f"未知事件")

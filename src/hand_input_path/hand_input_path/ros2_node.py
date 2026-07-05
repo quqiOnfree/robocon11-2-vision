@@ -7,8 +7,10 @@ from PySide6.QtCore import Signal, Slot, QObject
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String, Int8, Empty, UInt16, Bool, Float64
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from std_msgs.msg import String, UInt16, Bool, Float64
 from nav_msgs.msg import Odometry
+from r2_serial.msg import InitialPosition, StartupConfig
 
 
 class PathSignalEmitter(QObject):
@@ -19,6 +21,7 @@ class PathSignalEmitter(QObject):
     connection_signal = Signal(bool)                   # downlink connected
     mcu_event_signal = Signal(int)                     # event_code
     debug_msg_signal = Signal(str)                     # MCU debug message
+    initial_position_signal = Signal(int, int)          # x_mm, y_mm (启动坐标)
 
 
 class Ros2Node(Node):
@@ -28,12 +31,8 @@ class Ros2Node(Node):
 
         # Publisher
         self.grid_publisher = self.create_publisher(String, "grid_data", 10)
-        self.set_start_zone_pub = self.create_publisher(
-            UInt16, "/r2_serial/downlink/set_start_zone", 10)
-        self.start_command_pub = self.create_publisher(
-            Empty, "/r2_serial/downlink/start_command", 10)
-        self.match_zone_pub = self.create_publisher(
-            Int8, "/hand_input/match_zone", 10)
+        self.startup_config_pub = self.create_publisher(
+            StartupConfig, "/r2_serial/downlink/startup_config", 10)
 
         # Subscriber
         self.subscriber = self.create_subscription(
@@ -53,10 +52,29 @@ class Ros2Node(Node):
         self.debug_msg_sub = self.create_subscription(
             String, "/r2_serial/uplink/debug_msg", self.debug_msg_callback, 10)
 
+        # 启动坐标（transient_local，仅发布一次）
+        initial_position_topic = self.declare_parameter(
+            "initial_position_topic", "/r2/initial_position").value
+        initial_position_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
+        self.initial_position_sub = self.create_subscription(
+            InitialPosition,
+            initial_position_topic,
+            self.initial_position_callback,
+            initial_position_qos,
+        )
+
         # 状态缓存（避免重复 emit 相同值）
         self._last_localized = None
         self._last_fitness = None
         self._last_connection = None
+
+        # 起点坐标缓存（来自 /r2/initial_position，启动时发布一次）
+        self._initial_x = None
+        self._initial_y = None
 
     # ── 已有方法 ──
 
@@ -73,22 +91,19 @@ class Ros2Node(Node):
         self.grid_publisher.publish(msg)
         print("Published grid data:", json_data)
 
-    def publish_set_zone(self, zone: int):
-        msg = UInt16()
-        msg.data = zone
-        self.set_start_zone_pub.publish(msg)
-        self.get_logger().info(f"已发送设置启动区域: zone={zone}")
-
-    def publish_start_command(self):
-        msg = Empty()
-        self.start_command_pub.publish(msg)
-        self.get_logger().info("已发送开始命令")
-
-    def publish_match_zone(self, zone: int):
-        msg = Int8()
-        msg.data = zone
-        self.match_zone_pub.publish(msg)
-        self.get_logger().info(f"已发布半场设置: zone={zone}")
+    def publish_startup_config(self, area_type: int, begin_type: int):
+        if self._initial_x is None or self._initial_y is None:
+            self.get_logger().warn("尚未收到起点坐标，无法发送启动配置")
+            return
+        msg = StartupConfig()
+        msg.area_type = area_type
+        msg.begin_type = begin_type
+        msg.origin_x = self._initial_x
+        msg.origin_y = self._initial_y
+        self.startup_config_pub.publish(msg)
+        self.get_logger().info(
+            f"已发送合并启动配置: area={area_type} begin={begin_type} "
+            f"origin=({self._initial_x}, {self._initial_y})")
 
     def path_received(self, msg: String):
         try:
@@ -112,6 +127,11 @@ class Ros2Node(Node):
 
         self.path_signal.odom_signal.emit(x_mm, y_mm, z_mm, yaw_deg)
 
+    def initial_position_callback(self, msg: InitialPosition):
+        self._initial_x = int(msg.x_mm)
+        self._initial_y = int(msg.y_mm)
+        self.path_signal.initial_position_signal.emit(self._initial_x, self._initial_y)
+
     def localized_callback(self, msg: Bool):
         if self._last_localized != msg.data:
             self._last_localized = msg.data
@@ -130,7 +150,7 @@ class Ros2Node(Node):
 
     def check_connection(self):
         """检查下发节点是否在线（由 QTimer 周期调用）。"""
-        count = self.set_start_zone_pub.get_subscription_count()
+        count = self.startup_config_pub.get_subscription_count()
         connected = count > 0
         if self._last_connection != connected:
             self._last_connection = connected
