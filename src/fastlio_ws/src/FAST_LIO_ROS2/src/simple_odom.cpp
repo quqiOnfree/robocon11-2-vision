@@ -15,7 +15,6 @@
 #include <cstdio>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
@@ -23,6 +22,7 @@
 #include <thread>
 #include <vector>
 
+#include "r2_serial/msg/initial_position.hpp"
 #include "r2_serial/msg/serial_packet.hpp"
 #include "r2_serial/serial_protocol.hpp"
 
@@ -41,6 +41,8 @@ public:
         downlink_packet_topic_, 50);
     match_zone_pub_ = create_publisher<std_msgs::msg::Int8>(
         match_zone_topic_, rclcpp::QoS(1).transient_local().reliable());
+    initial_position_pub_ = create_publisher<r2_serial::msg::InitialPosition>(
+        initial_position_topic_, rclcpp::QoS(1).transient_local().reliable());
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 20,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
@@ -107,6 +109,8 @@ private:
         "downlink_packet_topic", "/r2_serial/downlink/packet");
     match_zone_topic_ = declare_parameter<std::string>(
         "match_zone_topic", "/r2/match_zone");
+    initial_position_topic_ = declare_parameter<std::string>(
+        "initial_position_topic", "/r2/initial_position");
     localized_topic_ = declare_parameter<std::string>(
         "localized_topic", "/r2/localized");
     status_service_name_ = declare_parameter<std::string>(
@@ -132,8 +136,10 @@ private:
       throw std::invalid_argument("zone 必须显式指定为 blue 或 red");
     }
 
-    pose_report_average_seconds_ = declare_parameter<double>(
-        "pose_report.average_seconds", 5.0);
+    initial_position_stabilization_seconds_ = declare_parameter<double>(
+        "initial_position.stabilization_seconds", 2.0);
+    initial_position_sample_seconds_ = declare_parameter<double>(
+        "initial_position.sample_seconds", 5.0);
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
 
@@ -148,7 +154,10 @@ private:
   }
 
   void validateParameters() {
-    pose_report_average_seconds_ = std::max(0.5, pose_report_average_seconds_);
+    initial_position_stabilization_seconds_ =
+        std::max(0.0, initial_position_stabilization_seconds_);
+    initial_position_sample_seconds_ =
+        std::max(0.5, initial_position_sample_seconds_);
     if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_)) {
       throw std::invalid_argument("二维车体外参必须是有限数值");
     }
@@ -194,62 +203,73 @@ private:
                 zone == Zone::kBlue ? "BLUE" : "RED", reason);
   }
 
-  void beginAverage(const std::string &reason) {
-    std::lock_guard<std::mutex> lock(average_mutex_);
-    average_active_ = true;
-    average_reason_ = reason;
-    average_start_ms_ = 0;
-    average_count_ = 0;
-    average_sum_x_ = 0.0;
-    average_sum_y_ = 0.0;
-    average_sum_sin_yaw_ = 0.0;
-    average_sum_cos_yaw_ = 0.0;
-    RCLCPP_INFO(get_logger(), "开始 %.1f 秒静止平均: %s",
-                pose_report_average_seconds_, reason.c_str());
-  }
-
-  void processAverage(double x_mm, double y_mm, double yaw_rad) {
-    std::string completed_reason;
-    double mean_x = 0.0;
-    double mean_y = 0.0;
-    double mean_yaw_deg = 0.0;
-    bool completed = false;
-
-    {
-      std::lock_guard<std::mutex> lock(average_mutex_);
-      if (!average_active_) {
-        return;
-      }
-      const auto now = nowMs();
-      if (average_start_ms_ == 0) {
-        average_start_ms_ = now;
-      }
-      ++average_count_;
-      average_sum_x_ += x_mm;
-      average_sum_y_ += y_mm;
-      average_sum_sin_yaw_ += std::sin(yaw_rad);
-      average_sum_cos_yaw_ += std::cos(yaw_rad);
-
-      const auto required_ms = static_cast<std::uint64_t>(
-          std::lround(pose_report_average_seconds_ * 1000.0));
-      if (now - average_start_ms_ < required_ms || average_count_ < 10) {
-        return;
-      }
-
-      mean_x = average_sum_x_ / static_cast<double>(average_count_);
-      mean_y = average_sum_y_ / static_cast<double>(average_count_);
-      mean_yaw_deg = std::atan2(average_sum_sin_yaw_, average_sum_cos_yaw_) *
-                     180.0 / M_PI;
-      completed_reason = average_reason_;
-      average_active_ = false;
-      completed = true;
+  void processInitialPosition(double x_mm, double y_mm) {
+    if (initial_position_published_.load()) {
+      return;
     }
 
-    if (completed) {
-      RCLCPP_INFO(get_logger(),
-                  "静止平均完成 [%s]: x=%.1f mm y=%.1f mm yaw=%.2f deg",
-                  completed_reason.c_str(), mean_x, mean_y, mean_yaw_deg);
+    const auto now = nowMs();
+    if (initial_position_first_pose_ms_ == 0) {
+      initial_position_first_pose_ms_ = now;
+      RCLCPP_INFO(
+          get_logger(),
+          "已收到首帧有效位姿，等待 %.1f 秒稳定后开始起点坐标平均",
+          initial_position_stabilization_seconds_);
+      return;
     }
+
+    const auto stabilization_ms = static_cast<std::uint64_t>(
+        std::lround(initial_position_stabilization_seconds_ * 1000.0));
+    if (now - initial_position_first_pose_ms_ < stabilization_ms) {
+      return;
+    }
+
+    if (initial_position_sample_start_ms_ == 0) {
+      initial_position_sample_start_ms_ = now;
+      initial_position_sum_x_mm_ = 0.0;
+      initial_position_sum_y_mm_ = 0.0;
+      initial_position_sample_count_ = 0;
+      RCLCPP_INFO(get_logger(), "开始 %.1f 秒起点坐标平均",
+                  initial_position_sample_seconds_);
+    }
+
+    initial_position_sum_x_mm_ += x_mm;
+    initial_position_sum_y_mm_ += y_mm;
+    ++initial_position_sample_count_;
+
+    const auto sample_ms = static_cast<std::uint64_t>(
+        std::lround(initial_position_sample_seconds_ * 1000.0));
+    if (now - initial_position_sample_start_ms_ < sample_ms ||
+        initial_position_sample_count_ < 10) {
+      return;
+    }
+
+    const double mean_x_mm =
+        initial_position_sum_x_mm_ /
+        static_cast<double>(initial_position_sample_count_);
+    const double mean_y_mm =
+        initial_position_sum_y_mm_ /
+        static_cast<double>(initial_position_sample_count_);
+
+    const auto mean_x = checkedInt16(mean_x_mm, "起点位置 X");
+    const auto mean_y = checkedInt16(mean_y_mm, "起点位置 Y");
+    if (!mean_x || !mean_y) {
+      return;
+    }
+
+    r2_serial::msg::InitialPosition msg;
+    msg.x_mm = *mean_x;
+    msg.y_mm = *mean_y;
+    initial_position_pub_->publish(msg);
+
+    initial_position_x_mm_.store(*mean_x);
+    initial_position_y_mm_.store(*mean_y);
+    initial_position_published_.store(true);
+    RCLCPP_INFO(
+        get_logger(),
+        "起点坐标已发布到 %s: x=%d mm y=%d mm samples=%zu",
+        initial_position_topic_.c_str(), static_cast<int>(*mean_x),
+        static_cast<int>(*mean_y), initial_position_sample_count_);
   }
 
   void triggerRelocalization(const char *command) {
@@ -299,7 +319,6 @@ private:
                  line.end());
       if (line == "q") {
         printStatus();
-        beginAverage("q 手动测量");
       } else if (line == "r1") {
         handleRecoveryCommand(false);
       } else if (line == "r2") {
@@ -317,14 +336,6 @@ private:
     const bool downlink_connected =
         downlink_packet_pub_ && downlink_packet_pub_->get_subscription_count() > 0;
 
-    bool averaging = false;
-    std::size_t samples = 0;
-    {
-      std::lock_guard<std::mutex> lock(average_mutex_);
-      averaging = average_active_;
-      samples = average_count_;
-    }
-
     std::ostringstream out;
     out << "\n================ [R2 位姿上报状态] ================\n";
     out << "运行模式     : " << modeName(mode_) << "\n";
@@ -339,11 +350,16 @@ private:
       out << "定位有效状态 : 纯里程计直通（不适用）\n";
     }
     out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
+    if (initial_position_published_.load()) {
+      out << "启动平均坐标 : X: " << initial_position_x_mm_.load()
+          << " mm | Y: " << initial_position_y_mm_.load()
+          << " mm | 已发布\n";
+    } else {
+      out << "启动平均坐标 : 等待 2 秒稳定 + 5 秒采样\n";
+    }
     out << "实际下发位姿 : X: " << output_x_.load()
         << " mm | Y: " << output_y_.load()
         << " mm | Yaw: " << output_yaw_deg_.load() << " deg\n";
-    out << "静止平均     : " << (averaging ? "进行中" : "空闲")
-        << " | samples=" << samples << "\n";
     out << "r2_serial连接: " << (downlink_connected ? "已发现订阅者" : "未发现订阅者") << "\n";
     if (have_publish) {
       out << "ROS发布状态  : 距上次发布 " << elapsed << " ms"
@@ -352,7 +368,7 @@ private:
     } else {
       out << "ROS发布状态  : 尚未发布 0x0101\n";
     }
-    out << "命令         : q=状态+5秒平均；r1/r2=仅 localization 触发重定位\n";
+    out << "命令         : q=查询完整状态；r1/r2=仅 localization 触发重定位\n";
     out << "==================================================";
     return out.str();
   }
@@ -418,11 +434,12 @@ private:
       current_z_.store(*z_mm);
     }
     current_yaw_deg_.store(*yaw_deg);
-    processAverage(raw_x_mm, raw_y_mm, yaw);
 
     if (mode_ == Mode::kLocalization && !localization_confirmed_.load()) {
       return;
     }
+
+    processInitialPosition(raw_x_mm, raw_y_mm);
 
     // 半区仅用于状态通知；位姿只做固定的雷达到车体中心二维外参换算。
     const double output_x_mm = raw_x_mm;
@@ -449,6 +466,11 @@ private:
                 base_offset_x_, base_offset_y_);
     RCLCPP_INFO(get_logger(),
                 "odometry 模式不执行启动锚点、runtime_offset 或坐标平移");
+    RCLCPP_INFO(
+        get_logger(),
+        "起点坐标: 首帧有效位姿后等待 %.1f 秒，再平均 %.1f 秒，发布到 %s",
+        initial_position_stabilization_seconds_,
+        initial_position_sample_seconds_, initial_position_topic_.c_str());
     std::printf("\n============================================================\n");
     std::printf(" R2 位姿上报节点已启动：q；r1/r2 仅用于 localization 重定位\n");
     std::printf("============================================================\n> ");
@@ -461,30 +483,33 @@ private:
   std::string odom_topic_;
   std::string downlink_packet_topic_;
   std::string match_zone_topic_;
+  std::string initial_position_topic_;
   std::string localized_topic_;
   std::string status_service_name_;
   std::string relocalization_service_name_;
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
-  double pose_report_average_seconds_{5.0};
-  mutable std::mutex average_mutex_;
-  bool average_active_{false};
-  std::string average_reason_;
-  std::uint64_t average_start_ms_{0};
-  std::size_t average_count_{0};
-  double average_sum_x_{0.0};
-  double average_sum_y_{0.0};
-  double average_sum_sin_yaw_{0.0};
-  double average_sum_cos_yaw_{0.0};
+  double initial_position_stabilization_seconds_{2.0};
+  double initial_position_sample_seconds_{5.0};
 
   std::atomic<bool> localization_confirmed_{false};
+  std::atomic<bool> initial_position_published_{false};
+  std::uint64_t initial_position_first_pose_ms_{0};
+  std::uint64_t initial_position_sample_start_ms_{0};
+  std::size_t initial_position_sample_count_{0};
+  double initial_position_sum_x_mm_{0.0};
+  double initial_position_sum_y_mm_{0.0};
+  std::atomic<std::int16_t> initial_position_x_mm_{0};
+  std::atomic<std::int16_t> initial_position_y_mm_{0};
 
   std::thread keyboard_thread_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr localized_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr match_zone_pub_;
+  rclcpp::Publisher<r2_serial::msg::InitialPosition>::SharedPtr
+      initial_position_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr relocalization_client_;
 
