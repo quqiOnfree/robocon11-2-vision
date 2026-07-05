@@ -69,6 +69,10 @@ class LidarPanelWidget(QDialog):
 
         coord_layout.addLayout(left_col)
         coord_layout.addLayout(right_col)
+        self.init_pos_label = QLabel("初始位置: ----  ---- mm")
+        self.init_pos_label.setFont(QFont("Arial", 12))
+        coord_layout.addWidget(self.init_pos_label)
+
         layout.addWidget(coord_group)
 
         # ── 串口状态 ──
@@ -98,6 +102,9 @@ class LidarPanelWidget(QDialog):
         self.y_label.setText(f"Y: {y_mm} mm")
         self.z_label.setText(f"Z: {z_mm} mm")
         self.yaw_label.setText(f"Yaw: {yaw_deg}°")
+
+    def update_initial_position(self, x_mm: int, y_mm: int):
+        self.init_pos_label.setText(f"初始位置: X={x_mm}  Y={y_mm} mm")
 
     def update_localized(self, localized: bool):
         if localized:

@@ -24,6 +24,7 @@ target_include_directories(asio INTERFACE
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/SerialPacket.msg
+  msg/InitialPosition.msg
 )
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)

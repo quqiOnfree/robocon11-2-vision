@@ -7,8 +7,10 @@ from PySide6.QtCore import Signal, Slot, QObject
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from std_msgs.msg import String, Int8, Empty, UInt16, Bool, Float64
 from nav_msgs.msg import Odometry
+from r2_serial.msg import InitialPosition
 
 
 class PathSignalEmitter(QObject):
@@ -19,6 +21,7 @@ class PathSignalEmitter(QObject):
     connection_signal = Signal(bool)                   # downlink connected
     mcu_event_signal = Signal(int)                     # event_code
     debug_msg_signal = Signal(str)                     # MCU debug message
+    initial_position_signal = Signal(int, int)         # x_mm, y_mm
 
 
 class Ros2Node(Node):
@@ -52,6 +55,14 @@ class Ros2Node(Node):
             UInt16, "/r2_serial/uplink/event_code", self.uplink_event_callback, 10)
         self.debug_msg_sub = self.create_subscription(
             String, "/r2_serial/uplink/debug_msg", self.debug_msg_callback, 10)
+
+        transparent_qos = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            depth=10)
+        self.initial_position_sub = self.create_subscription(
+            InitialPosition, "/r2/initial_position",
+            self.initial_position_callback, transparent_qos)
 
         # 状态缓存（避免重复 emit 相同值）
         self._last_localized = None
@@ -127,6 +138,9 @@ class Ros2Node(Node):
 
     def debug_msg_callback(self, msg: String):
         self.path_signal.debug_msg_signal.emit(msg.data)
+
+    def initial_position_callback(self, msg: InitialPosition):
+        self.path_signal.initial_position_signal.emit(msg.x_mm, msg.y_mm)
 
     def check_connection(self):
         """检查下发节点是否在线（由 QTimer 周期调用）。"""
