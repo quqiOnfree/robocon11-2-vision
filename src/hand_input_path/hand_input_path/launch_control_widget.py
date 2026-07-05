@@ -9,6 +9,41 @@ from PySide6.QtWidgets import (
     QButtonGroup,
 )
 from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer
+
+
+class CountdownDialog(QDialog):
+    """3 秒倒计时弹窗，可取消。"""
+
+    def __init__(self, seconds: int, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("倒计时")
+        self.setFixedSize(250, 150)
+        self._remaining = seconds
+
+        layout = QVBoxLayout(self)
+
+        self.label = QLabel(f"{self._remaining}...")
+        self.label.setFont(QFont("Arial", 48))
+        self.label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.label)
+
+        cancel_btn = QPushButton("取消")
+        cancel_btn.setFixedHeight(40)
+        cancel_btn.clicked.connect(self.reject)
+        layout.addWidget(cancel_btn)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(1000)
+
+    def _tick(self):
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self._timer.stop()
+            self.accept()
+        else:
+            self.label.setText(f"{self._remaining}...")
 
 
 class LaunchControlWidget(QDialog):
@@ -66,5 +101,8 @@ class LaunchControlWidget(QDialog):
 
     def _on_start_command(self):
         ros_node = getattr(self.parent(), "ros_node", None)
-        if ros_node is not None:
+        if ros_node is None:
+            return
+        dialog = CountdownDialog(3, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             ros_node.publish_start_command()
