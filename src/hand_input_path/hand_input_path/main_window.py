@@ -212,8 +212,6 @@ class MainWindow(QMainWindow):
             sig = self.ros_node.path_signal
             sig.odom_signal.connect(
                 self.lidar_panel_dialog.update_odom)
-            sig.initial_position_signal.connect(
-                self.lidar_panel_dialog.update_initial_position)
             sig.localized_signal.connect(
                 self.lidar_panel_dialog.update_localized)
             sig.fitness_signal.connect(
