@@ -18,6 +18,7 @@ class PathSignalEmitter(QObject):
     fitness_signal = Signal(float)                     # fitness score
     connection_signal = Signal(bool)                   # downlink connected
     mcu_event_signal = Signal(int)                     # event_code
+    debug_msg_signal = Signal(str)                     # MCU debug message
 
 
 class Ros2Node(Node):
@@ -49,6 +50,8 @@ class Ros2Node(Node):
             Float64, "/r2/fitness_score", self.fitness_callback, 10)
         self.uplink_event_sub = self.create_subscription(
             UInt16, "/r2_serial/uplink/event_code", self.uplink_event_callback, 10)
+        self.debug_msg_sub = self.create_subscription(
+            String, "/r2_serial/uplink/debug_msg", self.debug_msg_callback, 10)
 
         # 状态缓存（避免重复 emit 相同值）
         self._last_localized = None
@@ -121,6 +124,9 @@ class Ros2Node(Node):
 
     def uplink_event_callback(self, msg: UInt16):
         self.path_signal.mcu_event_signal.emit(int(msg.data))
+
+    def debug_msg_callback(self, msg: String):
+        self.path_signal.debug_msg_signal.emit(msg.data)
 
     def check_connection(self):
         """检查下发节点是否在线（由 QTimer 周期调用）。"""

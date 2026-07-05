@@ -51,6 +51,9 @@ inline constexpr std::uint16_t kPathRequestNextNew = 0x031D;
 inline constexpr std::uint16_t kSetStartZone = 0x0401;
 inline constexpr std::uint16_t kStartCommand = 0x0402;
 
+// 下位机 -> 上位机：调试消息，变长 char 数据。
+inline constexpr std::uint16_t kDebugMessage = 0x0501;
+
 // STM32 payload 里的 int16_t 使用小端序；协议头、长度、code、CRC 仍是大端序。
 inline void appendInt16Le(std::vector<std::uint8_t> &payload,
                           std::int16_t value) {

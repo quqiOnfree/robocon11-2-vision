@@ -3,6 +3,7 @@
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/int16_multi_array.hpp>
 #include <std_msgs/msg/u_int16.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/LinearMath/Quaternion.h>
@@ -173,6 +174,8 @@ private:
         "topics.path.request_next_new", "/r2_serial/uplink/path_request_next_new");
     vision_weapon_pole_state_topic_ = declare_parameter<std::string>(
         "topics.vision_weapon_pole_state", "/vision/weapon_pole_cmd_state_2");
+    debug_msg_topic_ = declare_parameter<std::string>(
+        "topics.debug_msg", "/r2_serial/uplink/debug_msg");
   }
 
   void initializeSerial(bool initial_attempt) {
@@ -273,6 +276,7 @@ private:
     path_request_new_pub_ = create_publisher<std_msgs::msg::UInt16>(path_request_new_topic_, 10);
     vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
         vision_weapon_pole_state_topic_, 10);
+    debug_msg_pub_ = create_publisher<std_msgs::msg::String>(debug_msg_topic_, 10);
 
     // 原始包入口：推荐 /r2_serial/downlink/packet，同时兼容旧 /r2/downlink/packet。
     createRawPacketSubscription(raw_packet_topic_);
@@ -519,6 +523,7 @@ private:
     publishVisionStateCommand(packet);
     publishPathRequest(packet);
     publishPathRequestNew(packet);
+    publishDebugMessage(packet);
 
     if (serial_debug_raw_) {
       const auto payload_hex = bytesToHex(packet.body_data(), packet.body_size());
@@ -561,6 +566,17 @@ private:
     path_request_new_pub_->publish(msg);
     RCLCPP_INFO(get_logger(), "转发路径规划请求: code=0x%04x -> %s, index=%d",
                 packet.code(), path_request_topic_.c_str(), static_cast<int>(msg.data));
+  }
+
+  void publishDebugMessage(const packet_t &packet) {
+    if (packet.code() != protocol::kDebugMessage) {
+      return;
+    }
+    std_msgs::msg::String msg;
+    msg.data = std::string(packet.body_data(),
+                           packet.body_data() + packet.body_size());
+    debug_msg_pub_->publish(msg);
+    RCLCPP_INFO(get_logger(), "MCU debug: %s", msg.data.c_str());
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
@@ -660,6 +676,7 @@ private:
   std::string path_request_topic_;
   std::string path_request_new_topic_;
   std::string vision_weapon_pole_state_topic_;
+  std::string debug_msg_topic_;
 
   std::atomic<std::uint64_t> tx_success_count_{0};
   std::atomic<std::uint64_t> tx_failure_count_{0};
@@ -697,6 +714,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_request_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr path_request_new_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_weapon_pole_state_pub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr debug_msg_pub_;
 };
 
 int main(int argc, char **argv) {

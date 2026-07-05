@@ -20,10 +20,12 @@ try:
     from .block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
     from .launch_control_widget import LaunchControlWidget
     from .lidar_panel_widget import LidarPanelWidget
+    from .debug_widget import DebugWidget
 except ImportError:
     from block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
     from launch_control_widget import LaunchControlWidget
     from lidar_panel_widget import LidarPanelWidget
+    from debug_widget import DebugWidget
 
 
 class MainWindow(QMainWindow):
@@ -153,6 +155,9 @@ class MainWindow(QMainWindow):
         self.grid_panel_action.triggered.connect(
             lambda: self.right_dock.setVisible(True))
 
+        self.debug_panel_action = self.toolbar.addAction("debug panel")
+        self.debug_panel_action.triggered.connect(self._open_debug_panel)
+
     def get_kfs_type(self) -> list[list[BlockType]]:
         return [[item.block_type for item in row] for row in self.grid_items]
 
@@ -216,6 +221,17 @@ class MainWindow(QMainWindow):
             sig.mcu_event_signal.connect(
                 self.lidar_panel_dialog.update_mcu_event)
         self.lidar_panel_dialog.show()
+
+    def _open_debug_panel(self):
+        if hasattr(self, 'debug_dialog') and self.debug_dialog is not None:
+            self.debug_dialog.show()
+            self.debug_dialog.raise_()
+            return
+        self.debug_dialog = DebugWidget(self)
+        if self.ros_node:
+            sig = self.ros_node.path_signal
+            sig.debug_msg_signal.connect(self.debug_dialog.update_debug_msg)
+        self.debug_dialog.show()
 
     def change_scene(self, scene_index: int):
         if scene_index == self.scene_index:
