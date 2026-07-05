@@ -6,6 +6,10 @@
 
 namespace r2_serial::protocol {
 
+// 上位机 -> 下位机：当前比赛半区，payload 为 int16_t（0=蓝，1=红）。
+inline constexpr std::uint16_t kMatchZone = 0x0000;
+inline constexpr std::uint16_t kMatchZoneAck = 0x000A;
+
 // 视觉与下位机共享的消息：0x0001 是视觉下发跟随量；0x0002/0x0003/0x0004 都按下位机视觉状态控制处理。
 inline constexpr std::uint16_t kVisionFollow = 0x0001;
 inline constexpr std::uint16_t kVisionStateLegacy = 0x0002;

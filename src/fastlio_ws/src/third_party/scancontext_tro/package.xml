@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>scancontext_tro</name>
+  <version>1.0.0</version>
+  <description>ROS 2 ament wrapper for Scan Context T-RO loop detection.</description>
+
+  <maintainer email="robocon@example.com">GDUT Robocon</maintainer>
+  <license>BSD</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>eigen</build_depend>
+  <build_depend>libpcl-all-dev</build_depend>
+  <depend>pcl_conversions</depend>
+  <exec_depend>eigen</exec_depend>
+  <exec_depend>libpcl-all-dev</exec_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>
