@@ -1,7 +1,6 @@
 """ROS2 通信层：Ros2Node 及 PathSignalEmitter。"""
 
 import json
-import math
 
 from PySide6.QtCore import Signal, Slot, QObject
 
@@ -10,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from std_msgs.msg import String, UInt16, Bool, Float64
 from nav_msgs.msg import Odometry
-from r2_serial.msg import InitialPosition, StartupConfig
+from r2_serial.msg import CurrentPose, InitialPosition, StartupConfig
 
 
 class PathSignalEmitter(QObject):
@@ -40,9 +39,13 @@ class Ros2Node(Node):
 
         # Subscriber (新增：位姿状态)
         odom_topic = self.declare_parameter(
-            "odom_topic", "/r2/global_odometry").value
+            "odom_topic", "/Odometry").value
         self.odom_sub = self.create_subscription(
             Odometry, odom_topic, self.odom_callback, 10)
+        current_pose_topic = self.declare_parameter(
+            "current_pose_topic", "/r2/current_pose_mm").value
+        self.current_pose_sub = self.create_subscription(
+            CurrentPose, current_pose_topic, self.current_pose_callback, 20)
         self.localized_sub = self.create_subscription(
             Bool, "/r2/localized", self.localized_callback, 10)
         self.fitness_sub = self.create_subscription(
@@ -125,22 +128,17 @@ class Ros2Node(Node):
             print("Failed to decode path command:", msg.data)
 
     def odom_callback(self, msg: Odometry):
-        """提取 X/Y/Z (mm) 和 Yaw (deg)."""
-        x_mm = int(round(msg.pose.pose.position.x * 1000.0))
-        y_mm = int(round(msg.pose.pose.position.y * 1000.0))
-        z_mm = int(round(msg.pose.pose.position.z * 1000.0))
+        """FAST-LIO 原始里程计仅用于补充 UI 的 Z 高度。"""
+        self._last_odom_z = int(round(msg.pose.pose.position.z * 1000.0))
 
-        # 四元数 → yaw
-        q = msg.pose.pose.orientation
-        siny = 2.0 * (q.w * q.z + q.x * q.y)
-        cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
-        yaw_deg = int(round(math.atan2(siny, cosy) * 180.0 / math.pi))
-
-        self._last_odom_x = x_mm
-        self._last_odom_y = y_mm
-        self._last_odom_z = z_mm
-        self._last_odom_yaw = yaw_deg
-        self.path_signal.odom_signal.emit(x_mm, y_mm, z_mm, yaw_deg)
+    def current_pose_callback(self, msg: CurrentPose):
+        """显示 r2_pose_reporter 准备下发给 MCU 的 int16 位姿。"""
+        self._last_odom_x = int(msg.x_mm)
+        self._last_odom_y = int(msg.y_mm)
+        self._last_odom_yaw = int(msg.yaw_deg)
+        self.path_signal.odom_signal.emit(
+            self._last_odom_x, self._last_odom_y,
+            self._last_odom_z, self._last_odom_yaw)
 
     def initial_position_callback(self, msg: InitialPosition):
         self._initial_x = int(msg.x_mm)
