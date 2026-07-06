@@ -76,6 +76,12 @@ class Ros2Node(Node):
         self._initial_x = None
         self._initial_y = None
 
+        # 实时位姿缓存（供 lidar panel 打开时回放）
+        self._last_odom_x = 0
+        self._last_odom_y = 0
+        self._last_odom_z = 0
+        self._last_odom_yaw = 0
+
     # ── 已有方法 ──
 
     @Slot(dict)
@@ -130,6 +136,10 @@ class Ros2Node(Node):
         cosy = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
         yaw_deg = int(round(math.atan2(siny, cosy) * 180.0 / math.pi))
 
+        self._last_odom_x = x_mm
+        self._last_odom_y = y_mm
+        self._last_odom_z = z_mm
+        self._last_odom_yaw = yaw_deg
         self.path_signal.odom_signal.emit(x_mm, y_mm, z_mm, yaw_deg)
 
     def initial_position_callback(self, msg: InitialPosition):

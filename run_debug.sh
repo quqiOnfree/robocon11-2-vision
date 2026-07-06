@@ -94,8 +94,7 @@ fi
 sleep 2
 start_process "r2_serial 串口收发" \
   ros2 launch r2_serial r2_data_downlink.launch.py \
-    serial_port:="$SERIAL_PORT" serial_debug_raw:=false \
-    match_zone_topic:=/r2/match_zone
+    serial_port:="$SERIAL_PORT" serial_debug_raw:=false
 sleep 1
 
 printf '\n%b\n' "${GREEN}调试链路已启动。此终端由 r2_pose_reporter 独占。${RESET}"

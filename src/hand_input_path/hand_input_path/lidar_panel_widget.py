@@ -136,6 +136,23 @@ class LidarPanelWidget(QDialog):
             self.connection_label.setText("下发节点: ○ 未连接")
             self.connection_label.setStyleSheet("color: red;")
 
+    def refresh_from_cache(self, node):
+        """从 ros_node 缓存刷新所有标签（面板打开时调用, 无需等下次 callback）."""
+        # 定位状态
+        if node._last_localized is not None:
+            self.update_localized(node._last_localized)
+        if node._last_fitness is not None:
+            self.update_fitness(node._last_fitness)
+        # 实时位姿
+        self.update_odom(node._last_odom_x, node._last_odom_y,
+                         node._last_odom_z, node._last_odom_yaw)
+        # 启动坐标
+        if node._initial_x is not None:
+            self.update_initial_position(node._initial_x, node._initial_y)
+        # 连接状态
+        if node._last_connection is not None:
+            self.update_connection(node._last_connection)
+
     def update_initial_position(self, x_mm: int, y_mm: int):
         self.start_x_label.setText(f"X: {x_mm} mm")
         self.start_y_label.setText(f"Y: {y_mm} mm")

@@ -222,6 +222,8 @@ class MainWindow(QMainWindow):
                 self.lidar_panel_dialog.update_mcu_event)
             sig.initial_position_signal.connect(
                 self.lidar_panel_dialog.update_initial_position)
+            # 打开时立刻用缓存值刷新, 不等下次 callback
+            self.lidar_panel_dialog.refresh_from_cache(self.ros_node)
         self.lidar_panel_dialog.show()
 
     def _open_debug_panel(self):

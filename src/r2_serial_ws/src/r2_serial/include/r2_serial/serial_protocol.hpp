@@ -13,8 +13,8 @@ namespace r2_serial::protocol {
 //     int16_t origin_x;            // 起点 X (mm)
 //     int16_t origin_y;            // 起点 Y (mm)
 //   };
-inline constexpr std::uint16_t kMatchZone = 0x0000;
-inline constexpr std::uint16_t kMatchZoneAck = 0x000A;
+inline constexpr std::uint16_t kStartupConfig = 0x0000;
+inline constexpr std::uint16_t kStartupConfigAck = 0x000A;
 
 // 视觉与下位机共享的消息：0x0001 是视觉下发跟随量；0x0002/0x0003/0x0004 都按下位机视觉状态控制处理。
 inline constexpr std::uint16_t kVisionFollow = 0x0001;

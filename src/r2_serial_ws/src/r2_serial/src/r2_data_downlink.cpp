@@ -407,7 +407,7 @@ private:
           protocol::appendInt16Le(payload, msg->begin_type);
           protocol::appendInt16Le(payload, msg->origin_x);
           protocol::appendInt16Le(payload, msg->origin_y);
-          sendPacket(protocol::kMatchZone, payload, false);
+          sendPacket(protocol::kStartupConfig, payload, false);
           RCLCPP_INFO(get_logger(),
               "发送合并启动配置: area=%d begin=%d origin=(%d,%d)",
               msg->area_type, msg->begin_type, msg->origin_x, msg->origin_y);
