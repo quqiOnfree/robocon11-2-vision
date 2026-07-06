@@ -26,6 +26,7 @@ EVENT_MAP = {
 class LidarPanelWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._force_quit = False
         self.setWindowTitle("R2 位姿状态")
         self.setMinimumWidth(320)
 
@@ -108,6 +109,13 @@ class LidarPanelWidget(QDialog):
         close_btn.setFixedHeight(40)
         close_btn.clicked.connect(self.close)
         layout.addWidget(close_btn)
+
+    def closeEvent(self, event):
+        if self._force_quit:
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
 
     # ── Public update slots ──
 

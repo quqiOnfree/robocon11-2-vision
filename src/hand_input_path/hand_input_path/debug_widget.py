@@ -52,6 +52,7 @@ def emit_debug_line(tag: str, line: str):
 class DebugWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._force_quit = False
         self.setWindowTitle("Debug Panel")
         self.setMinimumSize(650, 450)
 
@@ -95,6 +96,13 @@ class DebugWidget(QDialog):
         # 回放 widget 打开前缓存的 subprocess 输出
         for tag, line in _line_buffer:
             self._on_debug_line(tag, line)
+
+    def closeEvent(self, event):
+        if self._force_quit:
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
 
     def update_debug_msg(self, text: str):
         """MCU debug 消息 (原接口, 追加到 tab 0)."""

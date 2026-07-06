@@ -169,6 +169,11 @@ class MainWindow(QMainWindow):
         return BlockType.Empty
 
     def closeEvent(self, event):
+        for attr in ('launch_control_dialog', 'lidar_panel_dialog', 'debug_dialog'):
+            dlg = getattr(self, attr, None)
+            if dlg is not None:
+                dlg._force_quit = True
+                dlg.close()
         super().closeEvent(event)
 
     @Slot(list)
@@ -199,7 +204,10 @@ class MainWindow(QMainWindow):
             self.launch_control_dialog.show()
             self.launch_control_dialog.raise_()
             return
-        self.launch_control_dialog = LaunchControlWidget(self)
+        self.launch_control_dialog = LaunchControlWidget()
+        self.launch_control_dialog.set_main_window(self)
+        self.launch_control_dialog.destroyed.connect(
+            lambda: setattr(self, 'launch_control_dialog', None))
         self.launch_control_dialog.show()
 
     def _open_lidar_panel(self):
@@ -207,7 +215,9 @@ class MainWindow(QMainWindow):
             self.lidar_panel_dialog.show()
             self.lidar_panel_dialog.raise_()
             return
-        self.lidar_panel_dialog = LidarPanelWidget(self)
+        self.lidar_panel_dialog = LidarPanelWidget()
+        self.lidar_panel_dialog.destroyed.connect(
+            lambda: setattr(self, 'lidar_panel_dialog', None))
         if self.ros_node:
             sig = self.ros_node.path_signal
             sig.odom_signal.connect(
@@ -231,7 +241,9 @@ class MainWindow(QMainWindow):
             self.debug_dialog.show()
             self.debug_dialog.raise_()
             return
-        self.debug_dialog = DebugWidget(self)
+        self.debug_dialog = DebugWidget()
+        self.debug_dialog.destroyed.connect(
+            lambda: setattr(self, 'debug_dialog', None))
         if self.ros_node:
             sig = self.ros_node.path_signal
             sig.debug_msg_signal.connect(self.debug_dialog.update_debug_msg)

@@ -71,6 +71,8 @@ class CountdownDialog(QDialog):
 class LaunchControlWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._force_quit = False
+        self._main_window = None
         self.setWindowTitle("启动控制")
         self.setMinimumWidth(300)
 
@@ -143,6 +145,16 @@ class LaunchControlWidget(QDialog):
     def get_mode(self) -> str:
         return "localization" if self.mode_group.checkedId() == 0 else "odometry"
 
+    def set_main_window(self, mw):
+        self._main_window = mw
+
+    def closeEvent(self, event):
+        if self._force_quit:
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
+
     def _on_toggle_radar(self):
         if self._radar_running:
             self._stop_radar()
@@ -150,8 +162,7 @@ class LaunchControlWidget(QDialog):
             self._start_radar()
 
     def _start_radar(self):
-        parent = self.parent()
-        scene_index = getattr(parent, "scene_index", -1)
+        scene_index = getattr(self._main_window, "scene_index", -1)
         if scene_index < 0:
             QMessageBox.warning(self, "未选择半场",
                                 "请先在主窗口选择蓝色或红色场景！")
@@ -238,14 +249,14 @@ class LaunchControlWidget(QDialog):
         QMessageBox.information(self, "雷达已关闭", "雷达节点已停止")
 
     def _on_start_command(self):
-        ros_node = getattr(self.parent(), "ros_node", None)
+        ros_node = getattr(self._main_window, "ros_node", None)
         if ros_node is None:
             return
         if not ros_node.has_initial_position:
             QMessageBox.warning(self, "等待中",
                                 "尚未收到起点坐标，请等待定位完成后再开始比赛。")
             return
-        scene_index = getattr(self.parent(), "scene_index", -1)
+        scene_index = getattr(self._main_window, "scene_index", -1)
         if scene_index < 0:
             QMessageBox.warning(self, "未选择半场",
                                 "请先在主窗口选择蓝色或红色场景！")
