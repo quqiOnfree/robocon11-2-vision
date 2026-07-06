@@ -19,6 +19,7 @@ find_package(Threads REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   msg/InitialPosition.msg
+  msg/CurrentPose.msg
   msg/SerialPacket.msg
   msg/StartupConfig.msg
 )

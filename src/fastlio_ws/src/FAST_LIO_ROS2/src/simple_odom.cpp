@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "r2_serial/msg/current_pose.hpp"
 #include "r2_serial/msg/initial_position.hpp"
 #include "r2_serial/msg/serial_packet.hpp"
 #include "r2_serial/serial_protocol.hpp"
@@ -40,6 +41,8 @@ public:
         downlink_packet_topic_, 50);
     initial_position_pub_ = create_publisher<r2_serial::msg::InitialPosition>(
         initial_position_topic_, rclcpp::QoS(1).transient_local().reliable());
+    current_pose_pub_ = create_publisher<r2_serial::msg::CurrentPose>(
+        current_pose_topic_, 20);
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 20,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
@@ -95,6 +98,8 @@ private:
         "downlink_packet_topic", "/r2_serial/downlink/packet");
     initial_position_topic_ = declare_parameter<std::string>(
         "initial_position_topic", "/r2/initial_position");
+    current_pose_topic_ = declare_parameter<std::string>(
+        "current_pose_topic", "/r2/current_pose_mm");
     localized_topic_ = declare_parameter<std::string>(
         "localized_topic", "/r2/localized");
     status_service_name_ = declare_parameter<std::string>(
@@ -422,6 +427,13 @@ private:
     output_x_.store(*serial_x);
     output_y_.store(*serial_y);
     output_yaw_deg_.store(*serial_yaw);
+
+    r2_serial::msg::CurrentPose pose_msg;
+    pose_msg.x_mm = *serial_x;
+    pose_msg.y_mm = *serial_y;
+    pose_msg.yaw_deg = *serial_yaw;
+    current_pose_pub_->publish(pose_msg);
+
     publishPosition(*serial_x, *serial_y, *serial_yaw);
   }
 
@@ -449,6 +461,7 @@ private:
   std::string odom_topic_;
   std::string downlink_packet_topic_;
   std::string initial_position_topic_;
+  std::string current_pose_topic_;
   std::string localized_topic_;
   std::string status_service_name_;
   std::string relocalization_service_name_;
@@ -474,6 +487,7 @@ private:
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Publisher<r2_serial::msg::InitialPosition>::SharedPtr
       initial_position_pub_;
+  rclcpp::Publisher<r2_serial::msg::CurrentPose>::SharedPtr current_pose_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr relocalization_client_;
 
