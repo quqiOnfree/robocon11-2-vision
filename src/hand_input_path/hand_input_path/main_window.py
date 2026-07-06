@@ -147,6 +147,12 @@ class MainWindow(QMainWindow):
 
     def create_menu(self):
         self.toolbar = self.addToolBar("toolbar")
+        self.toolbar.setMovable(False)
+        self.toolbar.setStyleSheet(
+            "QToolBar { spacing: 12px; padding: 6px; }"
+            "QToolBar QToolButton { padding: 8px 20px; font-size: 14px;"
+            " font-weight: bold; }"
+        )
 
         self.lidar_panel_action = self.toolbar.addAction("lidar panel")
         self.lidar_panel_action.triggered.connect(self._open_lidar_panel)
@@ -199,10 +205,19 @@ class MainWindow(QMainWindow):
         self.emit_btn.setEnabled(enabled)
         self.launch_btn.setEnabled(enabled)
 
+    @staticmethod
+    def _raise_child_window(dlg):
+        """将子窗口提至 Z-order 最前并获取焦点。"""
+        if dlg.isMinimized():
+            dlg.showNormal()
+        else:
+            dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
     def _open_launch_control(self):
         if hasattr(self, 'launch_control_dialog') and self.launch_control_dialog is not None:
-            self.launch_control_dialog.show()
-            self.launch_control_dialog.raise_()
+            self._raise_child_window(self.launch_control_dialog)
             return
         self.launch_control_dialog = LaunchControlWidget()
         self.launch_control_dialog.set_main_window(self)
@@ -212,8 +227,7 @@ class MainWindow(QMainWindow):
 
     def _open_lidar_panel(self):
         if hasattr(self, 'lidar_panel_dialog') and self.lidar_panel_dialog is not None:
-            self.lidar_panel_dialog.show()
-            self.lidar_panel_dialog.raise_()
+            self._raise_child_window(self.lidar_panel_dialog)
             return
         self.lidar_panel_dialog = LidarPanelWidget()
         self.lidar_panel_dialog.destroyed.connect(
@@ -238,8 +252,7 @@ class MainWindow(QMainWindow):
 
     def _open_debug_panel(self):
         if hasattr(self, 'debug_dialog') and self.debug_dialog is not None:
-            self.debug_dialog.show()
-            self.debug_dialog.raise_()
+            self._raise_child_window(self.debug_dialog)
             return
         self.debug_dialog = DebugWidget()
         self.debug_dialog.destroyed.connect(

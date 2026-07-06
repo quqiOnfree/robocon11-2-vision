@@ -26,6 +26,9 @@ EVENT_MAP = {
 class LidarPanelWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        flags = self.windowFlags()
+        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
+        self.setWindowFlags(flags)
         self._force_quit = False
         self.setWindowTitle("R2 位姿状态")
         self.setMinimumWidth(320)

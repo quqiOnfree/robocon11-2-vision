@@ -71,6 +71,9 @@ class CountdownDialog(QDialog):
 class LaunchControlWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        flags = self.windowFlags()
+        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
+        self.setWindowFlags(flags)
         self._force_quit = False
         self._main_window = None
         self.setWindowTitle("启动控制")
@@ -138,6 +141,14 @@ class LaunchControlWidget(QDialog):
         )
         start_btn.clicked.connect(self._on_start_command)
         layout.addWidget(start_btn)
+
+        layout.addSpacing(10)
+
+        close_btn = QPushButton("关闭")
+        close_btn.setFixedHeight(50)
+        close_btn.setFont(QFont("Arial", 14, QFont.Bold))
+        close_btn.clicked.connect(self.close)
+        layout.addWidget(close_btn)
 
         self._radar_running = False
         self._radar_processes = []

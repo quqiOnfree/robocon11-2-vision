@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from PySide6.QtGui import QFont, QColor, QTextCursor
-from PySide6.QtCore import Signal, QObject
+from PySide6.QtCore import Qt, Signal, QObject
 
 MAX_LINES = 500
 
@@ -52,6 +52,9 @@ def emit_debug_line(tag: str, line: str):
 class DebugWidget(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
+        flags = self.windowFlags()
+        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
+        self.setWindowFlags(flags)
         self._force_quit = False
         self.setWindowTitle("Debug Panel")
         self.setMinimumSize(650, 450)
