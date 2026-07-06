@@ -119,7 +119,6 @@ private:
     } else {
       throw std::invalid_argument("zone 必须显式指定为 blue 或 red");
     }
-    mirror_center_y_ = declare_parameter<double>("mirror_center_y", -1532.5);
 
     initial_position_stabilization_seconds_ = declare_parameter<double>(
         "initial_position.stabilization_seconds", 2.0);
@@ -409,14 +408,10 @@ private:
 
     processInitialPosition(raw_x_mm, raw_y_mm);
 
-    // 红方坐标镜射：半场对称，Y 坐标以 mirror_center_y 为轴镜像，Yaw 取反
-    double output_x_mm = raw_x_mm;
-    double output_y_mm = raw_y_mm;
-    double output_yaw = yaw * 180.0 / M_PI;
-    if (zone_ == Zone::kRed) {
-      output_y_mm = 2.0 * mirror_center_y_ - output_y_mm;
-      output_yaw = -output_yaw;
-    }
+    // 半区仅用于状态通知；位姿只做固定的雷达到车体中心二维外参换算。
+    const double output_x_mm = raw_x_mm;
+    const double output_y_mm = raw_y_mm;
+    const double output_yaw = yaw * 180.0 / M_PI;
 
     const auto serial_x = checkedInt16(output_x_mm, "下发位置 X");
     const auto serial_y = checkedInt16(output_y_mm, "下发位置 Y");
@@ -460,7 +455,6 @@ private:
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
-  double mirror_center_y_{-1532.5};
   double initial_position_stabilization_seconds_{2.0};
   double initial_position_sample_seconds_{5.0};
 
