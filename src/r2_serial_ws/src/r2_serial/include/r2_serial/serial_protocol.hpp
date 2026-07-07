@@ -6,12 +6,13 @@
 
 namespace r2_serial::protocol {
 
-// 上位机 -> 下位机：合并启动配置，payload 为 4×int16_t LE。
+// 上位机 -> 下位机：合并启动配置，payload 为 5×int16_t LE。
 //   struct startup_config {
 //     area_type area_type_value;   // 0=blue, 1=red
 //     begin_type begin_type_value; // 0=一区, 1=二区, 2=三区坡前, 3=三区重试
 //     int16_t origin_x;            // 起点 X (mm)
 //     int16_t origin_y;            // 起点 Y (mm)
+//     int16_t kfs_amount;          // 车内初始方块数量 0~3
 //   };
 inline constexpr std::uint16_t kStartupConfig = 0x0000;
 inline constexpr std::uint16_t kStartupConfigAck = 0x000A;

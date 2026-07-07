@@ -100,7 +100,8 @@ class Ros2Node(Node):
         self.grid_publisher.publish(msg)
         print("Published grid data:", json_data)
 
-    def publish_startup_config(self, area_type: int, begin_type: int) -> bool:
+    def publish_startup_config(self, area_type: int, begin_type: int,
+                                kfs_amount: int = 0) -> bool:
         if self._initial_x is None or self._initial_y is None:
             self.get_logger().warn("尚未收到起点坐标，无法发送启动配置")
             return False
@@ -109,11 +110,25 @@ class Ros2Node(Node):
         msg.begin_type = begin_type
         msg.origin_x = self._initial_x
         msg.origin_y = self._initial_y
+        msg.kfs_amount = kfs_amount
         self.startup_config_pub.publish(msg)
         self.get_logger().info(
             f"已发送合并启动配置: area={area_type} begin={begin_type} "
-            f"origin=({self._initial_x}, {self._initial_y})")
+            f"origin=({self._initial_x}, {self._initial_y}) "
+            f"kfs_amount={kfs_amount}")
         return True
+
+    def clear_lidar_cache(self):
+        """关闭雷达时清空所有暂存数据，避免残留到下次启动。"""
+        self._initial_x = None
+        self._initial_y = None
+        self._last_odom_x = 0
+        self._last_odom_y = 0
+        self._last_odom_z = 0
+        self._last_odom_yaw = 0
+        self._last_localized = None
+        self._last_fitness = None
+        self._last_connection = None
 
     @property
     def has_initial_position(self) -> bool:

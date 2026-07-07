@@ -148,6 +148,21 @@ class LidarPanelWidget(QWidget):
         self.start_x_label.setText(f"X: {x_mm} mm")
         self.start_y_label.setText(f"Y: {y_mm} mm")
 
+    def reset_display(self):
+        """关闭雷达时重置所有标签到默认状态。"""
+        self.start_x_label.setText("X: ---- mm")
+        self.start_y_label.setText("Y: ---- mm")
+        self.x_label.setText("X: ---- mm")
+        self.y_label.setText("Y: ---- mm")
+        self.z_label.setText("Z: ---- mm")
+        self.yaw_label.setText("Yaw: ---- °")
+        self.localized_label.setText("定位: ⏳ 等待中")
+        self.localized_label.setStyleSheet("")
+        self.fitness_label.setText("得分: --")
+        self.connection_label.setText("下发节点: ⏳ 检测中")
+        self.connection_label.setStyleSheet("")
+        self.mcu_label.setText("MCU 事件: --")
+
     def update_mcu_event(self, event_code: int):
         desc = EVENT_MAP.get(event_code, f"未知事件")
         self.mcu_label.setText(f"MCU 事件: 0x{event_code:04X} {desc}")

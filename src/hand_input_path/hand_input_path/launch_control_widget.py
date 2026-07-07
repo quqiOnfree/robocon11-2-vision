@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QLabel,
     QPushButton,
     QRadioButton,
@@ -73,15 +74,17 @@ class LaunchControlWidget(QWidget):
     def __init__(self, main_window, parent=None):
         super().__init__(parent)
         self._main_window = main_window
-        self.setMinimumWidth(300)
 
         layout = QVBoxLayout(self)
 
-        # ── 选择启动区域 ──
+        # ── 上半部分：三列 radio button ──
+        top_row = QHBoxLayout()
+
+        # 左列：选择启动区域
+        zone_col = QVBoxLayout()
         zone_title = QLabel("选择启动区域")
         zone_title.setFont(QFont("Arial", 14, QFont.Bold))
-        layout.addWidget(zone_title)
-
+        zone_col.addWidget(zone_title)
         self.zone_group = QButtonGroup(self)
         zones = [
             ("1区", 0),
@@ -93,56 +96,76 @@ class LaunchControlWidget(QWidget):
             radio = QRadioButton(name)
             radio.setFont(QFont("Arial", 14))
             self.zone_group.addButton(radio, value)
-            layout.addWidget(radio)
+            zone_col.addWidget(radio)
             if value == 0:
                 radio.setChecked(True)
+        zone_col.addStretch()
+        top_row.addLayout(zone_col)
 
-        layout.addSpacing(10)
-
-        # ── 启动模式 ──
+        # 中列：启动模式
+        mode_col = QVBoxLayout()
         mode_title = QLabel("启动模式")
         mode_title.setFont(QFont("Arial", 14, QFont.Bold))
-        layout.addWidget(mode_title)
-
+        mode_col.addWidget(mode_title)
         self.mode_group = QButtonGroup(self)
         loc_radio = QRadioButton("定位模式 (Localization)")
         loc_radio.setFont(QFont("Arial", 14))
         self.mode_group.addButton(loc_radio, 0)
-        layout.addWidget(loc_radio)
+        mode_col.addWidget(loc_radio)
         loc_radio.setChecked(True)
-
         odo_radio = QRadioButton("里程计模式 (Odometry)")
         odo_radio.setFont(QFont("Arial", 14))
         self.mode_group.addButton(odo_radio, 1)
-        layout.addWidget(odo_radio)
+        mode_col.addWidget(odo_radio)
+        mode_col.addStretch()
+        top_row.addLayout(mode_col)
 
+        # 右列：车内初始方块数量
+        block_col = QVBoxLayout()
+        block_title = QLabel("车内初始方块数量")
+        block_title.setFont(QFont("Arial", 14, QFont.Bold))
+        block_col.addWidget(block_title)
+        self.block_count_group = QButtonGroup(self)
+        for i in range(4):  # 0, 1, 2, 3
+            radio = QRadioButton(f"{i} 个")
+            radio.setFont(QFont("Arial", 14))
+            self.block_count_group.addButton(radio, i)
+            block_col.addWidget(radio)
+            if i == 0:
+                radio.setChecked(True)
+        block_col.addStretch()
+        top_row.addLayout(block_col)
+
+        layout.addLayout(top_row)
         layout.addSpacing(10)
 
-        # ── 启动/关闭雷达 (单按钮互斥) ──
+        # ── 下半部分：操作按钮（横向）──
+        btn_row = QHBoxLayout()
+
         self.radar_btn = QPushButton("启动雷达")
         self.radar_btn.setFixedHeight(60)
         self.radar_btn.setFont(QFont("Arial", 14, QFont.Bold))
         self.radar_btn.setStyleSheet("background-color: #2196F3; color: white;")
         self.radar_btn.clicked.connect(self._on_toggle_radar)
-        layout.addWidget(self.radar_btn)
+        btn_row.addWidget(self.radar_btn)
 
-        layout.addSpacing(10)
-
-        # ── 设置启动区域并开始比赛 ──
         start_btn = QPushButton("设置启动区域并开始比赛")
-        start_btn.setFixedHeight(80)
-        start_btn.setFont(QFont("Arial", 16, QFont.Bold))
-        start_btn.setStyleSheet(
-            "background-color: red; color: white;"
-        )
+        start_btn.setFixedHeight(60)
+        start_btn.setFont(QFont("Arial", 14, QFont.Bold))
+        start_btn.setStyleSheet("background-color: red; color: white;")
         start_btn.clicked.connect(self._on_start_command)
-        layout.addWidget(start_btn)
+        btn_row.addWidget(start_btn)
+
+        layout.addLayout(btn_row)
 
         self._radar_running = False
         self._radar_processes = []
 
     def get_mode(self) -> str:
         return "localization" if self.mode_group.checkedId() == 0 else "odometry"
+
+    def get_block_count(self) -> int:
+        return self.block_count_group.checkedId()
 
     def _on_toggle_radar(self):
         if self._radar_running:
@@ -235,6 +258,15 @@ class LaunchControlWidget(QWidget):
         self._radar_running = False
         self.radar_btn.setText("启动雷达")
         self.radar_btn.setStyleSheet("background-color: #2196F3; color: white;")
+
+        # 清空 lidar 暂存数据，避免残留到下次启动
+        main_window = self._main_window
+        if main_window is not None:
+            ros_node = getattr(main_window, "ros_node", None)
+            if ros_node is not None:
+                ros_node.clear_lidar_cache()
+            main_window.lidar_panel.reset_display()
+
         QMessageBox.information(self, "雷达已关闭", "雷达节点已停止")
 
     def _on_start_command(self):
@@ -255,6 +287,7 @@ class LaunchControlWidget(QWidget):
             return
         dialog = CountdownDialog(3, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            if not ros_node.publish_startup_config(scene_index, zone):
+            if not ros_node.publish_startup_config(scene_index, zone,
+                                                       self.get_block_count()):
                 QMessageBox.warning(self, "发送失败",
                                     "启动配置发送失败，请确认已收到起点坐标。")
