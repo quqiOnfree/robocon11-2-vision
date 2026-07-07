@@ -1,12 +1,10 @@
 """Debug 消息终端窗口：标签页切换信源 + subprocess 输出 + 自动裁剪。"""
 
 from PySide6.QtWidgets import (
-    QDialog,
+    QWidget,
     QVBoxLayout,
     QTextEdit,
-    QPushButton,
     QTabWidget,
-    QWidget,
 )
 from PySide6.QtGui import QFont, QColor, QTextCursor
 from PySide6.QtCore import Qt, Signal, QObject
@@ -49,21 +47,19 @@ def emit_debug_line(tag: str, line: str):
     _debug_signal.line_signal.emit(tag, line)
 
 
-class DebugWidget(QDialog):
+class DebugWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        flags = self.windowFlags()
-        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
-        self.setWindowFlags(flags)
-        self._force_quit = False
-        self.setWindowTitle("Debug Panel")
         self.setMinimumSize(650, 450)
 
         layout = QVBoxLayout(self)
 
         # ── 标签页 ──
         self.tab_widget = QTabWidget()
-        self.tab_widget.setFont(QFont("Arial", 11))
+        self.tab_widget.setFont(QFont("Arial", 9))
+        self.tab_widget.setStyleSheet(
+            "QTabBar::tab { padding: 4px 10px; min-width: 40px; }"
+        )
 
         self._editors = []
         self._line_counts = []
@@ -86,26 +82,12 @@ class DebugWidget(QDialog):
 
         layout.addWidget(self.tab_widget)
 
-        # ── 大关闭按钮 ──
-        close_btn = QPushButton("关闭")
-        close_btn.setFixedHeight(50)
-        close_btn.setFont(QFont("Arial", 16, QFont.Bold))
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-
         # ── 连接信号 ──
         _debug_signal.line_signal.connect(self._on_debug_line)
 
         # 回放 widget 打开前缓存的 subprocess 输出
         for tag, line in _line_buffer:
             self._on_debug_line(tag, line)
-
-    def closeEvent(self, event):
-        if self._force_quit:
-            event.accept()
-        else:
-            event.ignore()
-            self.hide()
 
     def update_debug_msg(self, text: str):
         """MCU debug 消息 (原接口, 追加到 tab 0)."""

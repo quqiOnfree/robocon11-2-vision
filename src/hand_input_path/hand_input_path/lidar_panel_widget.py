@@ -1,15 +1,13 @@
-"""Lidar 状态面板：独立弹窗显示 R2 位姿、定位、串口状态。"""
+"""Lidar 状态面板：显示 R2 位姿、定位、串口状态。"""
 
 from PySide6.QtWidgets import (
-    QDialog,
+    QWidget,
     QVBoxLayout,
     QLabel,
-    QPushButton,
     QGroupBox,
     QHBoxLayout,
 )
 from PySide6.QtGui import QFont
-from PySide6.QtCore import Qt
 
 # MCU 事件码 → 中文描述
 EVENT_MAP = {
@@ -23,14 +21,9 @@ EVENT_MAP = {
 }
 
 
-class LidarPanelWidget(QDialog):
+class LidarPanelWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        flags = self.windowFlags()
-        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
-        self.setWindowFlags(flags)
-        self._force_quit = False
-        self.setWindowTitle("R2 位姿状态")
         self.setMinimumWidth(320)
 
         layout = QVBoxLayout(self)
@@ -106,19 +99,6 @@ class LidarPanelWidget(QDialog):
         serial_layout.addWidget(self.mcu_label)
 
         layout.addWidget(serial_group)
-
-        # ── 关闭按钮 ──
-        close_btn = QPushButton("关闭")
-        close_btn.setFixedHeight(40)
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-
-    def closeEvent(self, event):
-        if self._force_quit:
-            event.accept()
-        else:
-            event.ignore()
-            self.hide()
 
     # ── Public update slots ──
 

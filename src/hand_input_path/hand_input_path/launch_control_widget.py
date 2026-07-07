@@ -1,4 +1,4 @@
-"""启动控制子窗口：选择区域、模式、启动/关闭雷达、发送比赛命令。"""
+"""启动控制面板：选择区域、模式、启动/关闭雷达、发送比赛命令。"""
 
 import os
 import signal
@@ -23,6 +23,7 @@ def _read_output(p: subprocess.Popen, tag: str):
 
 from PySide6.QtWidgets import (
     QDialog,
+    QWidget,
     QVBoxLayout,
     QLabel,
     QPushButton,
@@ -68,15 +69,10 @@ class CountdownDialog(QDialog):
             self.label.setText(f"{self._remaining}...")
 
 
-class LaunchControlWidget(QDialog):
-    def __init__(self, parent=None):
+class LaunchControlWidget(QWidget):
+    def __init__(self, main_window, parent=None):
         super().__init__(parent)
-        flags = self.windowFlags()
-        flags = (flags & ~Qt.WindowType.Dialog) | Qt.WindowType.Window
-        self.setWindowFlags(flags)
-        self._force_quit = False
-        self._main_window = None
-        self.setWindowTitle("启动控制")
+        self._main_window = main_window
         self.setMinimumWidth(300)
 
         layout = QVBoxLayout(self)
@@ -142,29 +138,11 @@ class LaunchControlWidget(QDialog):
         start_btn.clicked.connect(self._on_start_command)
         layout.addWidget(start_btn)
 
-        layout.addSpacing(10)
-
-        close_btn = QPushButton("关闭")
-        close_btn.setFixedHeight(50)
-        close_btn.setFont(QFont("Arial", 14, QFont.Bold))
-        close_btn.clicked.connect(self.close)
-        layout.addWidget(close_btn)
-
         self._radar_running = False
         self._radar_processes = []
 
     def get_mode(self) -> str:
         return "localization" if self.mode_group.checkedId() == 0 else "odometry"
-
-    def set_main_window(self, mw):
-        self._main_window = mw
-
-    def closeEvent(self, event):
-        if self._force_quit:
-            event.accept()
-        else:
-            event.ignore()
-            self.hide()
 
     def _on_toggle_radar(self):
         if self._radar_running:

@@ -1,20 +1,19 @@
-"""主窗口：方格编辑器 UI 及交互逻辑。"""
+"""主窗口：方格编辑器 UI 及交互逻辑（Tab 化单窗口）。"""
 
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QMainWindow,
-    QVBoxLayout,
     QGridLayout,
+    QHBoxLayout,
     QWidget,
     QPushButton,
     QGraphicsScene,
     QGraphicsView,
-    QDockWidget,
+    QTabWidget,
     QButtonGroup,
-    QLabel,
     QMessageBox,
 )
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 
 try:
     from .block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
@@ -36,30 +35,40 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("手输命令 - 方格编辑器")
         self.grid_items: list[list[BlockItem]] = []
         self.ros_node = None
-
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-
-        layout = QVBoxLayout()
-        central_widget.setLayout(layout)
-
-        self.graphics_scene = QGraphicsScene(self)
-        self.graphics_scene.setSceneRect(0, 0, 500, 400 + 20)
-        self.graphics_view = QGraphicsView(self.graphics_scene, parent=self)
-        self.graphics_view.setMinimumSize(500, 400 + 20)
-        layout.addWidget(self.graphics_view)
-
         self.scene_index = -1
 
-        self.create_side_panel()
-        self.create_menu()
+        # ── QTabWidget 作为中央控件 ──
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setFont(QFont("Arial", 16, QFont.Bold))
+        self.tab_widget.setStyleSheet(
+            "QTabBar::tab { padding: 12px 28px; min-width: 80px; min-height: 32px; }"
+        )
+        self.setCentralWidget(self.tab_widget)
 
-        # 占位提示文字
-        self._placeholder = self.graphics_scene.addText("请选择半场")
-        font = self._placeholder.font()
-        font.setPointSize(24)
-        self._placeholder.setFont(font)
-        self._placeholder.setPos(150, 170)
+        # ── Tab 0: Grid ──
+        self._create_grid_tab()
+
+        # ── Tab 1: Lidar ──
+        self.lidar_panel = LidarPanelWidget()
+        self.tab_widget.addTab(self.lidar_panel, "Lidar")
+
+        # ── Tab 2: Debug ──
+        self.debug_panel = DebugWidget()
+        self.tab_widget.addTab(self.debug_panel, "Debug")
+
+        # ── Tab 3: Launch ──
+        self.launch_panel = LaunchControlWidget(main_window=self)
+        self.tab_widget.addTab(self.launch_panel, "Launch")
+
+        self._set_widgets_enabled(False)
+        self.showMaximized()
+
+        # 每个 Tab 用不同颜色区分
+        tab_bar = self.tab_widget.tabBar()
+        tab_bar.setTabTextColor(0, QColor("#2196F3"))  # Grid 蓝色
+        tab_bar.setTabTextColor(1, QColor("#4CAF50"))  # Lidar 绿色
+        tab_bar.setTabTextColor(2, QColor("#FF9800"))  # Debug 橙色
+        tab_bar.setTabTextColor(3, QColor("#F44336"))  # Launch 红色
 
     def create_grid(self, grid: list[list[BlockLevel]]):
         self.grid_items = []
@@ -81,31 +90,37 @@ class MainWindow(QMainWindow):
         self.grid_items = []
         self.create_grid(grid)
 
-    def create_side_panel(self):
-        if hasattr(self, "right_dock"):
-            self.removeDockWidget(self.right_dock)
-        self.right_dock = QDockWidget("方块类型", self)
-        widget = QWidget(self)
-        layout = QGridLayout(widget)
+    def _create_grid_tab(self):
+        """创建 Grid Tab：左侧网格编辑器 + 右侧方块类型面板。"""
+        grid_tab = QWidget()
+        h_layout = QHBoxLayout(grid_tab)
+        h_layout.setContentsMargins(4, 4, 4, 4)
 
-        # 蓝/红场景按钮（常驻）
-        select_blue_scene = QPushButton(self)
-        select_blue_scene.setText("蓝色场景")
+        # ── 左侧：网格编辑器 ──
+        self.graphics_scene = QGraphicsScene(self)
+        self.graphics_scene.setSceneRect(0, 0, 500, 400 + 20)
+        self.graphics_view = QGraphicsView(self.graphics_scene, parent=self)
+        self.graphics_view.setMinimumSize(500, 400 + 20)
+        h_layout.addWidget(self.graphics_view, stretch=1)
+
+        # ── 右侧：方块类型面板 ──
+        side_panel = QWidget()
+        side_layout = QGridLayout(side_panel)
+
+        select_blue_scene = QPushButton("蓝色场景")
         select_blue_scene.setStyleSheet(
             f"background-color: {QColor('lightblue').name()};")
         select_blue_scene.clicked.connect(lambda: self.change_scene(0))
         select_blue_scene.setFixedSize(100, 100)
-        layout.addWidget(select_blue_scene, 0, 0)
+        side_layout.addWidget(select_blue_scene, 0, 0)
 
-        select_red_scene = QPushButton(self)
-        select_red_scene.setText("红色场景")
+        select_red_scene = QPushButton("红色场景")
         select_red_scene.setStyleSheet(
             f"background-color: {QColor('lightcoral').name()};")
         select_red_scene.clicked.connect(lambda: self.change_scene(1))
         select_red_scene.setFixedSize(100, 100)
-        layout.addWidget(select_red_scene, 0, 1)
+        side_layout.addWidget(select_red_scene, 0, 1)
 
-        # 按钮组（互斥效果，但不强制）
         self.type_buttons = QButtonGroup(self)
 
         count = 0
@@ -117,7 +132,7 @@ class MainWindow(QMainWindow):
             btn.setStyleSheet(
                 f"background-color: {color.name()}; color: {text_color.name()};"
             )
-            layout.addWidget(btn, count // 2 + 1, count % 2)  # row 从 1 开始
+            side_layout.addWidget(btn, count // 2 + 1, count % 2)
             count += 1
             self.type_buttons.addButton(btn)
 
@@ -128,41 +143,18 @@ class MainWindow(QMainWindow):
             f"background-color: {QColor('lightgray').name()}; "
             f"color: {QColor('black').name()};"
         )
-        layout.addWidget(self.emit_btn)
+        side_layout.addWidget(self.emit_btn)
 
-        # 启动控制按钮
-        self.launch_btn = QPushButton("启动控制")
-        self.launch_btn.clicked.connect(self._open_launch_control)
-        self.launch_btn.setFixedSize(100, 100)
-        self.launch_btn.setStyleSheet(
-            "background-color: orange; color: black; font-weight: bold;"
-        )
-        layout.addWidget(self.launch_btn)
+        h_layout.addWidget(side_panel, stretch=0)
 
-        self._set_widgets_enabled(False)
+        # 占位提示文字
+        self._placeholder = self.graphics_scene.addText("请选择半场")
+        font = self._placeholder.font()
+        font.setPointSize(24)
+        self._placeholder.setFont(font)
+        self._placeholder.setPos(150, 170)
 
-        self.right_dock.setWidget(widget)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea,
-                           self.right_dock)
-
-    def create_menu(self):
-        self.toolbar = self.addToolBar("toolbar")
-        self.toolbar.setMovable(False)
-        self.toolbar.setStyleSheet(
-            "QToolBar { spacing: 12px; padding: 6px; }"
-            "QToolBar QToolButton { padding: 8px 20px; font-size: 14px;"
-            " font-weight: bold; }"
-        )
-
-        self.lidar_panel_action = self.toolbar.addAction("lidar panel")
-        self.lidar_panel_action.triggered.connect(self._open_lidar_panel)
-
-        self.grid_panel_action = self.toolbar.addAction("grid panel")
-        self.grid_panel_action.triggered.connect(
-            lambda: self.right_dock.setVisible(True))
-
-        self.debug_panel_action = self.toolbar.addAction("debug panel")
-        self.debug_panel_action.triggered.connect(self._open_debug_panel)
+        self.tab_widget.addTab(grid_tab, "Grid")
 
     def get_kfs_type(self) -> list[list[BlockType]]:
         return [[item.block_type for item in row] for row in self.grid_items]
@@ -174,12 +166,23 @@ class MainWindow(QMainWindow):
                     return item.block_type
         return BlockType.Empty
 
+    def connect_ros_signals(self):
+        """连接 ROS2 信号到 Lidar/Debug 面板（ros_node 就绪后调用）。"""
+        if self.ros_node is None:
+            return
+        sig = self.ros_node.path_signal
+        sig.odom_signal.connect(self.lidar_panel.update_odom)
+        sig.localized_signal.connect(self.lidar_panel.update_localized)
+        sig.fitness_signal.connect(self.lidar_panel.update_fitness)
+        sig.connection_signal.connect(self.lidar_panel.update_connection)
+        sig.mcu_event_signal.connect(self.lidar_panel.update_mcu_event)
+        sig.initial_position_signal.connect(
+            self.lidar_panel.update_initial_position)
+        sig.debug_msg_signal.connect(self.debug_panel.update_debug_msg)
+        # 立刻用缓存值刷新面板
+        self.lidar_panel.refresh_from_cache(self.ros_node)
+
     def closeEvent(self, event):
-        for attr in ('launch_control_dialog', 'lidar_panel_dialog', 'debug_dialog'):
-            dlg = getattr(self, attr, None)
-            if dlg is not None:
-                dlg._force_quit = True
-                dlg.close()
         super().closeEvent(event)
 
     @Slot(list)
@@ -203,64 +206,6 @@ class MainWindow(QMainWindow):
         for btn in self.type_buttons.buttons():
             btn.setEnabled(enabled)
         self.emit_btn.setEnabled(enabled)
-        self.launch_btn.setEnabled(enabled)
-
-    @staticmethod
-    def _raise_child_window(dlg):
-        """将子窗口提至 Z-order 最前并获取焦点。"""
-        if dlg.isMinimized():
-            dlg.showNormal()
-        else:
-            dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
-
-    def _open_launch_control(self):
-        if hasattr(self, 'launch_control_dialog') and self.launch_control_dialog is not None:
-            self._raise_child_window(self.launch_control_dialog)
-            return
-        self.launch_control_dialog = LaunchControlWidget()
-        self.launch_control_dialog.set_main_window(self)
-        self.launch_control_dialog.destroyed.connect(
-            lambda: setattr(self, 'launch_control_dialog', None))
-        self.launch_control_dialog.show()
-
-    def _open_lidar_panel(self):
-        if hasattr(self, 'lidar_panel_dialog') and self.lidar_panel_dialog is not None:
-            self._raise_child_window(self.lidar_panel_dialog)
-            return
-        self.lidar_panel_dialog = LidarPanelWidget()
-        self.lidar_panel_dialog.destroyed.connect(
-            lambda: setattr(self, 'lidar_panel_dialog', None))
-        if self.ros_node:
-            sig = self.ros_node.path_signal
-            sig.odom_signal.connect(
-                self.lidar_panel_dialog.update_odom)
-            sig.localized_signal.connect(
-                self.lidar_panel_dialog.update_localized)
-            sig.fitness_signal.connect(
-                self.lidar_panel_dialog.update_fitness)
-            sig.connection_signal.connect(
-                self.lidar_panel_dialog.update_connection)
-            sig.mcu_event_signal.connect(
-                self.lidar_panel_dialog.update_mcu_event)
-            sig.initial_position_signal.connect(
-                self.lidar_panel_dialog.update_initial_position)
-            # 打开时立刻用缓存值刷新, 不等下次 callback
-            self.lidar_panel_dialog.refresh_from_cache(self.ros_node)
-        self.lidar_panel_dialog.show()
-
-    def _open_debug_panel(self):
-        if hasattr(self, 'debug_dialog') and self.debug_dialog is not None:
-            self._raise_child_window(self.debug_dialog)
-            return
-        self.debug_dialog = DebugWidget()
-        self.debug_dialog.destroyed.connect(
-            lambda: setattr(self, 'debug_dialog', None))
-        if self.ros_node:
-            sig = self.ros_node.path_signal
-            sig.debug_msg_signal.connect(self.debug_dialog.update_debug_msg)
-        self.debug_dialog.show()
 
     def change_scene(self, scene_index: int):
         if scene_index == self.scene_index:

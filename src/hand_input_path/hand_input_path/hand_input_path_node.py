@@ -85,6 +85,7 @@ def main():
     # 连接信号槽
     window.emit_grid.connect(node.publish_grid)
     node.path_signal.path_signal.connect(window.update_path)
+    window.connect_ros_signals()
 
     window.show()
 
