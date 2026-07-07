@@ -129,8 +129,8 @@ private:
         "initial_position.stabilization_seconds", 2.0);
     initial_position_sample_seconds_ = declare_parameter<double>(
         "initial_position.sample_seconds", 5.0);
-    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
-    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
+    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.0847);
+    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2183);
 
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
