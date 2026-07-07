@@ -61,7 +61,6 @@ class MainWindow(QMainWindow):
         self.tab_widget.addTab(self.launch_panel, "Launch")
 
         self._set_widgets_enabled(False)
-        self.showMaximized()
 
         # 每个 Tab 用不同颜色区分
         tab_bar = self.tab_widget.tabBar()
