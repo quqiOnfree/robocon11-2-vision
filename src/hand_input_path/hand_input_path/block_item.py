@@ -56,6 +56,14 @@ class BlockItem(QGraphicsRectItem):
         self.block_type = new_type
         self.update_color()
 
+    def mousePressEvent(self, event):
+        # 第一次点击选中（防误触），已在选中状态下再点才循环类型
+        # Empty → R1_KFS → R2_KFS → False_KFS → Empty → ...
+        if self.isSelected():
+            next_val = (self.block_type.value + 1) % len(BlockType)
+            self.set_type(BlockType(next_val))
+        super().mousePressEvent(event)
+
     def update_color(self):
         self.setBrush(self.get_color())
         self.update()

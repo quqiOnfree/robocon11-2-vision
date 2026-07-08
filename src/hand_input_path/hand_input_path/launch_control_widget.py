@@ -22,6 +22,7 @@ def _read_output(p: subprocess.Popen, tag: str):
 
 
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QWidget,
     QVBoxLayout,
@@ -197,6 +198,9 @@ class LaunchControlWidget(QWidget):
         self.radar_btn.setEnabled(False)
         self.radar_btn.setText("启动中...")
         self.radar_btn.setStyleSheet("background-color: #FFC107; color: black;")
+
+        # 强制刷新 UI，确保按钮变色立即可见
+        QApplication.processEvents()
 
         try:
             def _launch(cmd, tag):
