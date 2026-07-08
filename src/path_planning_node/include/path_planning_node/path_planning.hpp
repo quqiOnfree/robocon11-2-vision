@@ -577,7 +577,7 @@ protected:
         }
       };
 
-      auto update_commands = [&](const std::optional<point> &op) {
+      auto update_commands = [&](const std::optional<point> &op, direction dire) {
         if (!op.has_value()) {
           return;
         }
@@ -586,7 +586,33 @@ protected:
              (ext_r2kfs_count + r2kfs_must_be_grabed <
               max_r2kfs_can_be_grabed)) &&
             get_kfs(p) == kfs_type::r2kfs) {
+          switch (dire) {
+          case direction::up:
+            break;
+          case direction::left:
+            commands.push(command::turn_left);
+            break;
+          case direction::right:
+            commands.push(command::turn_right);
+            break;
+          case direction::down:
+            commands.push(command::turn_around);
+            break;
+          };
           gen_grab_command(p);
+          switch (dire) {
+          case direction::up:
+            break;
+          case direction::left:
+            commands.push(command::turn_right);
+            break;
+          case direction::right:
+            commands.push(command::turn_left);
+            break;
+          case direction::down:
+            commands.push(command::turn_around);
+            break;
+          };
           local_map[p.x][p.y] = kfs_type::empty;
           ++r2kfs_grabbed;
           if (must_be_walked_points.find(p) == must_be_walked_points.end()) {
@@ -600,10 +626,10 @@ protected:
         }
       };
 
-      update_commands(up);
-      update_commands(left);
-      update_commands(right);
-      update_commands(down);
+      update_commands(up, direction::up);
+      update_commands(left, direction::left);
+      update_commands(right, direction::right);
+      update_commands(down, direction::down);
 
       if (current_direction == next_direction) {
         if (current_level == map_level::ground) {
