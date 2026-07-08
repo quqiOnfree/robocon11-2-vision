@@ -92,6 +92,16 @@ private:
     return zone == Zone::kBlue ? "Blue" : "Red";
   }
 
+  static double normalizeDeg(double deg) {
+    while (deg > 180.0) deg -= 360.0;
+    while (deg < -180.0) deg += 360.0;
+    return deg;
+  }
+
+  static double distance2d(double x1, double y1, double x2, double y2) {
+    return std::hypot(x1 - x2, y1 - y2);
+  }
+
   void readParameters() {
     odom_topic_ = declare_parameter<std::string>("odom_topic", "/Odometry");
     downlink_packet_topic_ = declare_parameter<std::string>(
@@ -132,6 +142,20 @@ private:
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.0847);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2183);
 
+    stationary_guard_enabled_ = declare_parameter<bool>(
+        "stationary_guard.enabled", true);
+    stationary_guard_lock_seconds_ = declare_parameter<double>(
+        "stationary_guard.lock_seconds", 2.0);
+    stationary_guard_static_speed_mm_s_ = declare_parameter<double>(
+        "stationary_guard.static_speed_mm_s", 35.0);
+    stationary_guard_motion_speed_mm_s_ = declare_parameter<double>(
+        "stationary_guard.motion_speed_mm_s", 120.0);
+    stationary_guard_lock_radius_mm_ = declare_parameter<double>(
+        "stationary_guard.lock_radius_mm", 45.0);
+    stationary_guard_yaw_threshold_deg_ = declare_parameter<double>(
+        "stationary_guard.yaw_threshold_deg", 2.0);
+    stationary_guard_max_hold_drift_mm_ = declare_parameter<double>(
+        "stationary_guard.max_hold_drift_mm", 1800.0);
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
@@ -150,6 +174,20 @@ private:
     if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_)) {
       throw std::invalid_argument("二维车体外参必须是有限数值");
     }
+    stationary_guard_lock_seconds_ =
+        std::max(0.2, stationary_guard_lock_seconds_);
+    stationary_guard_static_speed_mm_s_ =
+        std::max(1.0, stationary_guard_static_speed_mm_s_);
+    stationary_guard_motion_speed_mm_s_ =
+        std::max(stationary_guard_static_speed_mm_s_ + 1.0,
+                 stationary_guard_motion_speed_mm_s_);
+    stationary_guard_lock_radius_mm_ =
+        std::max(1.0, stationary_guard_lock_radius_mm_);
+    stationary_guard_yaw_threshold_deg_ =
+        std::max(0.1, stationary_guard_yaw_threshold_deg_);
+    stationary_guard_max_hold_drift_mm_ =
+        std::max(stationary_guard_lock_radius_mm_,
+                 stationary_guard_max_hold_drift_mm_);
   }
 
   std::optional<std::int16_t> checkedInt16(double value,
@@ -332,6 +370,16 @@ private:
     out << "实际下发位姿 : X: " << output_x_.load()
         << " mm | Y: " << output_y_.load()
         << " mm | Yaw: " << output_yaw_deg_.load() << " deg\n";
+    if (stationary_guard_enabled_) {
+      out << "静止漂移保护 : "
+          << (stationary_guard_locked_atomic_.load() ? "已锁定" : "监测中")
+          << " | anchor=(" << stationary_guard_anchor_x_atomic_.load()
+          << ", " << stationary_guard_anchor_y_atomic_.load()
+          << ") yaw=" << stationary_guard_anchor_yaw_atomic_.load()
+          << " | hold=" << stationary_guard_hold_count_.load() << "\n";
+    } else {
+      out << "静止漂移保护 : 关闭\n";
+    }
     out << "r2_serial连接: " << (downlink_connected ? "已发现订阅者" : "未发现订阅者") << "\n";
     if (have_publish) {
       out << "ROS发布状态  : 距上次发布 " << elapsed << " ms"
@@ -355,6 +403,122 @@ private:
       std::shared_ptr<std_srvs::srv::Trigger::Response> response) {
     response->success = true;
     response->message = buildStatusText();
+  }
+
+  void applyStationaryGuard(double raw_x_mm, double raw_y_mm, double raw_yaw_deg,
+                            double &out_x_mm, double &out_y_mm, double &out_yaw_deg) {
+    out_x_mm = raw_x_mm;
+    out_y_mm = raw_y_mm;
+    out_yaw_deg = raw_yaw_deg;
+
+    if (!stationary_guard_enabled_ || mode_ != Mode::kOdometry) {
+      return;
+    }
+
+    const auto now = nowMs();
+    if (!stationary_guard_have_last_) {
+      stationary_guard_have_last_ = true;
+      stationary_guard_last_time_ms_ = now;
+      stationary_guard_last_x_mm_ = raw_x_mm;
+      stationary_guard_last_y_mm_ = raw_y_mm;
+      stationary_guard_last_yaw_deg_ = raw_yaw_deg;
+      stationary_guard_candidate_start_ms_ = now;
+      stationary_guard_candidate_x_mm_ = raw_x_mm;
+      stationary_guard_candidate_y_mm_ = raw_y_mm;
+      stationary_guard_candidate_yaw_deg_ = raw_yaw_deg;
+      return;
+    }
+
+    const double dt = std::max(1.0, static_cast<double>(now - stationary_guard_last_time_ms_)) / 1000.0;
+    const double step_mm = distance2d(raw_x_mm, raw_y_mm,
+                                      stationary_guard_last_x_mm_,
+                                      stationary_guard_last_y_mm_);
+    const double speed_mm_s = step_mm / dt;
+    const double yaw_step_deg = std::abs(
+        normalizeDeg(raw_yaw_deg - stationary_guard_last_yaw_deg_));
+
+    stationary_guard_last_time_ms_ = now;
+    stationary_guard_last_x_mm_ = raw_x_mm;
+    stationary_guard_last_y_mm_ = raw_y_mm;
+    stationary_guard_last_yaw_deg_ = raw_yaw_deg;
+
+    if (stationary_guard_locked_) {
+      const double drift_mm = distance2d(raw_x_mm, raw_y_mm,
+                                         stationary_guard_anchor_x_mm_,
+                                         stationary_guard_anchor_y_mm_);
+      const double yaw_from_anchor_deg = std::abs(
+          normalizeDeg(raw_yaw_deg - stationary_guard_anchor_yaw_deg_));
+      const bool looks_static =
+          speed_mm_s <= stationary_guard_static_speed_mm_s_ &&
+          yaw_step_deg <= stationary_guard_yaw_threshold_deg_ &&
+          yaw_from_anchor_deg <= stationary_guard_yaw_threshold_deg_ &&
+          drift_mm <= stationary_guard_max_hold_drift_mm_;
+      const bool real_motion =
+          speed_mm_s >= stationary_guard_motion_speed_mm_s_ ||
+          yaw_from_anchor_deg > stationary_guard_yaw_threshold_deg_ ||
+          drift_mm > stationary_guard_max_hold_drift_mm_;
+
+      if (looks_static && !real_motion) {
+        out_x_mm = stationary_guard_anchor_x_mm_;
+        out_y_mm = stationary_guard_anchor_y_mm_;
+        out_yaw_deg = stationary_guard_anchor_yaw_deg_;
+        stationary_guard_hold_count_.fetch_add(1);
+        return;
+      }
+
+      stationary_guard_locked_ = false;
+      stationary_guard_locked_atomic_.store(false);
+      stationary_guard_candidate_start_ms_ = now;
+      stationary_guard_candidate_x_mm_ = raw_x_mm;
+      stationary_guard_candidate_y_mm_ = raw_y_mm;
+      stationary_guard_candidate_yaw_deg_ = raw_yaw_deg;
+      RCLCPP_INFO(get_logger(),
+                  "静止漂移保护已释放: speed=%.1f mm/s drift=%.1f mm yaw_delta=%.2f deg",
+                  speed_mm_s, drift_mm, yaw_from_anchor_deg);
+      return;
+    }
+
+    const double candidate_dist_mm = distance2d(
+        raw_x_mm, raw_y_mm, stationary_guard_candidate_x_mm_,
+        stationary_guard_candidate_y_mm_);
+    const double candidate_yaw_deg = std::abs(
+        normalizeDeg(raw_yaw_deg - stationary_guard_candidate_yaw_deg_));
+    const bool stable =
+        speed_mm_s <= stationary_guard_static_speed_mm_s_ &&
+        candidate_dist_mm <= stationary_guard_lock_radius_mm_ &&
+        candidate_yaw_deg <= stationary_guard_yaw_threshold_deg_;
+
+    if (!stable) {
+      stationary_guard_candidate_start_ms_ = now;
+      stationary_guard_candidate_x_mm_ = raw_x_mm;
+      stationary_guard_candidate_y_mm_ = raw_y_mm;
+      stationary_guard_candidate_yaw_deg_ = raw_yaw_deg;
+      return;
+    }
+
+    const auto lock_ms = static_cast<std::uint64_t>(
+        std::lround(stationary_guard_lock_seconds_ * 1000.0));
+    if (now - stationary_guard_candidate_start_ms_ >= lock_ms) {
+      stationary_guard_locked_ = true;
+      stationary_guard_locked_atomic_.store(true);
+      stationary_guard_anchor_x_mm_ = stationary_guard_candidate_x_mm_;
+      stationary_guard_anchor_y_mm_ = stationary_guard_candidate_y_mm_;
+      stationary_guard_anchor_yaw_deg_ = stationary_guard_candidate_yaw_deg_;
+      stationary_guard_anchor_x_atomic_.store(
+          static_cast<std::int16_t>(std::lround(stationary_guard_anchor_x_mm_)));
+      stationary_guard_anchor_y_atomic_.store(
+          static_cast<std::int16_t>(std::lround(stationary_guard_anchor_y_mm_)));
+      stationary_guard_anchor_yaw_atomic_.store(
+          static_cast<std::int16_t>(std::lround(stationary_guard_anchor_yaw_deg_)));
+      RCLCPP_INFO(get_logger(),
+                  "静止漂移保护已锁定: anchor=(%.0f, %.0f) yaw=%.1f deg",
+                  stationary_guard_anchor_x_mm_, stationary_guard_anchor_y_mm_,
+                  stationary_guard_anchor_yaw_deg_);
+      out_x_mm = stationary_guard_anchor_x_mm_;
+      out_y_mm = stationary_guard_anchor_y_mm_;
+      out_yaw_deg = stationary_guard_anchor_yaw_deg_;
+      stationary_guard_hold_count_.fetch_add(1);
+    }
   }
 
   bool publishPosition(std::int16_t x_mm, std::int16_t y_mm,
@@ -414,9 +578,12 @@ private:
     processInitialPosition(raw_x_mm, raw_y_mm);
 
     // 半区仅用于状态通知；位姿只做固定的雷达到车体中心二维外参换算。
-    const double output_x_mm = raw_x_mm;
-    const double output_y_mm = raw_y_mm;
-    const double output_yaw = yaw * 180.0 / M_PI;
+    // odometry 模式下可选启用静止漂移保护，抑制原地慢漂；检测到真实移动会自动释放。
+    double output_x_mm = raw_x_mm;
+    double output_y_mm = raw_y_mm;
+    double output_yaw = yaw * 180.0 / M_PI;
+    applyStationaryGuard(raw_x_mm, raw_y_mm, output_yaw,
+                         output_x_mm, output_y_mm, output_yaw);
 
     const auto serial_x = checkedInt16(output_x_mm, "下发位置 X");
     const auto serial_y = checkedInt16(output_y_mm, "下发位置 Y");
@@ -443,6 +610,11 @@ private:
                 modeName(mode_), zoneName(zone_), odom_topic_.c_str());
     RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
                 base_offset_x_, base_offset_y_);
+    RCLCPP_INFO(get_logger(),
+                "静止漂移保护: %s, lock=%.1fs static<=%.1f mm/s release>=%.1f mm/s",
+                stationary_guard_enabled_ ? "开启" : "关闭",
+                stationary_guard_lock_seconds_, stationary_guard_static_speed_mm_s_,
+                stationary_guard_motion_speed_mm_s_);
     RCLCPP_INFO(get_logger(),
                 "odometry 模式不执行启动锚点、runtime_offset 或坐标平移");
     RCLCPP_INFO(
@@ -471,6 +643,27 @@ private:
   double initial_position_stabilization_seconds_{2.0};
   double initial_position_sample_seconds_{5.0};
 
+  bool stationary_guard_enabled_{true};
+  double stationary_guard_lock_seconds_{2.0};
+  double stationary_guard_static_speed_mm_s_{35.0};
+  double stationary_guard_motion_speed_mm_s_{120.0};
+  double stationary_guard_lock_radius_mm_{45.0};
+  double stationary_guard_yaw_threshold_deg_{2.0};
+  double stationary_guard_max_hold_drift_mm_{1800.0};
+  bool stationary_guard_have_last_{false};
+  bool stationary_guard_locked_{false};
+  std::uint64_t stationary_guard_last_time_ms_{0};
+  double stationary_guard_last_x_mm_{0.0};
+  double stationary_guard_last_y_mm_{0.0};
+  double stationary_guard_last_yaw_deg_{0.0};
+  std::uint64_t stationary_guard_candidate_start_ms_{0};
+  double stationary_guard_candidate_x_mm_{0.0};
+  double stationary_guard_candidate_y_mm_{0.0};
+  double stationary_guard_candidate_yaw_deg_{0.0};
+  double stationary_guard_anchor_x_mm_{0.0};
+  double stationary_guard_anchor_y_mm_{0.0};
+  double stationary_guard_anchor_yaw_deg_{0.0};
+
   std::atomic<bool> localization_confirmed_{false};
   std::atomic<bool> initial_position_published_{false};
   std::uint64_t initial_position_first_pose_ms_{0};
@@ -480,6 +673,11 @@ private:
   double initial_position_sum_y_mm_{0.0};
   std::atomic<std::int16_t> initial_position_x_mm_{0};
   std::atomic<std::int16_t> initial_position_y_mm_{0};
+  std::atomic<bool> stationary_guard_locked_atomic_{false};
+  std::atomic<std::int16_t> stationary_guard_anchor_x_atomic_{0};
+  std::atomic<std::int16_t> stationary_guard_anchor_y_atomic_{0};
+  std::atomic<std::int16_t> stationary_guard_anchor_yaw_atomic_{0};
+  std::atomic<std::uint64_t> stationary_guard_hold_count_{0};
 
   std::thread keyboard_thread_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
