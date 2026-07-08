@@ -248,7 +248,7 @@ class LaunchControlWidget(QWidget):
         finally:
             self.radar_btn.setEnabled(True)
 
-    def _stop_radar(self):
+    def _stop_radar(self, silent: bool = False):
         for p in self._radar_processes:
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGINT)
@@ -267,7 +267,8 @@ class LaunchControlWidget(QWidget):
                 ros_node.clear_lidar_cache()
             main_window.lidar_panel.reset_display()
 
-        QMessageBox.information(self, "雷达已关闭", "雷达节点已停止")
+        if not silent:
+            QMessageBox.information(self, "雷达已关闭", "雷达节点已停止")
 
     def _on_start_command(self):
         ros_node = getattr(self._main_window, "ros_node", None)

@@ -182,6 +182,9 @@ class MainWindow(QMainWindow):
         self.lidar_panel.refresh_from_cache(self.ros_node)
 
     def closeEvent(self, event):
+        # 关闭前先停雷达，避免子进程变成孤儿
+        if self.launch_panel._radar_running:
+            self.launch_panel._stop_radar(silent=True)
         super().closeEvent(event)
 
     @Slot(list)
