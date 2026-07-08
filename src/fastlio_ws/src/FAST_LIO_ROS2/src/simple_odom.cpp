@@ -18,7 +18,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "r2_serial/msg/current_pose.hpp"
@@ -64,8 +63,10 @@ public:
       localization_confirmed_.store(true);
     }
 
-    keyboard_thread_ = std::thread(&R2PoseReporter::keyboardLoop, this);
-    keyboard_thread_.detach();
+    status_line_timer_ = create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(status_line_interval_seconds_)),
+        std::bind(&R2PoseReporter::printStatusLine, this));
 
     printStartupSummary();
   }
@@ -156,6 +157,8 @@ private:
         "stationary_guard.yaw_threshold_deg", 2.0);
     stationary_guard_max_hold_drift_mm_ = declare_parameter<double>(
         "stationary_guard.max_hold_drift_mm", 1800.0);
+    status_line_interval_seconds_ = declare_parameter<double>(
+        "status_line.interval_seconds", 0.2);
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
@@ -188,6 +191,8 @@ private:
     stationary_guard_max_hold_drift_mm_ =
         std::max(stationary_guard_lock_radius_mm_,
                  stationary_guard_max_hold_drift_mm_);
+    status_line_interval_seconds_ =
+        std::max(0.05, status_line_interval_seconds_);
   }
 
   std::optional<std::int16_t> checkedInt16(double value,
@@ -320,23 +325,31 @@ private:
                 command);
   }
 
-  void keyboardLoop() {
-    std::string line;
-    while (rclcpp::ok() && std::getline(std::cin, line)) {
-      line = lower(line);
-      line.erase(std::remove_if(line.begin(), line.end(),
-                                [](unsigned char c) { return std::isspace(c); }),
-                 line.end());
-      if (line == "q") {
-        printStatus();
-      } else if (line == "r1") {
-        handleRecoveryCommand(false);
-      } else if (line == "r2") {
-        handleRecoveryCommand(true);
-      } else if (!line.empty()) {
-        std::printf("\n[r2_pose_reporter] 支持命令: q / r1 / r2\n> ");
-      }
+  void printStatusLine() const {
+    const auto now = nowMs();
+    const auto last_pose = last_pose_time_ms_.load();
+    const auto last_send = last_publish_time_ms_.load();
+    const bool have_pose = last_pose != 0;
+    const bool have_send = last_send != 0;
+    const bool downlink_connected =
+        downlink_packet_pub_ && downlink_packet_pub_->get_subscription_count() > 0;
+    const char *guard_state = "off";
+    if (stationary_guard_enabled_) {
+      guard_state = stationary_guard_locked_atomic_.load() ? "LOCK" : "watch";
     }
+
+    std::printf(
+        "\rPOSE mode=%s zone=%s raw=(%d,%d,%d) yaw=%d out=(%d,%d) yaw=%d "
+        "guard=%s serial=%s pose_age=%s send_age=%s pub=%lu drop=%lu        ",
+        modeName(mode_), zoneName(zone_), current_x_.load(), current_y_.load(),
+        current_z_.load(), current_yaw_deg_.load(), output_x_.load(),
+        output_y_.load(), output_yaw_deg_.load(), guard_state,
+        downlink_connected ? "Y" : "N",
+        have_pose ? std::to_string(now - last_pose).c_str() : "NA",
+        have_send ? std::to_string(now - last_send).c_str() : "NA",
+        static_cast<unsigned long>(publish_success_count_.load()),
+        static_cast<unsigned long>(publish_failure_count_.load()));
+    std::fflush(stdout);
   }
 
   std::string buildStatusText() const {
@@ -388,14 +401,9 @@ private:
     } else {
       out << "ROS发布状态  : 尚未发布 0x0101\n";
     }
-    out << "命令         : q=查询完整状态；r1/r2=仅 localization 触发重定位\n";
+    out << "终端输出     : 持续单行显示；完整状态可调用 /r2_pose_reporter/report_status\n";
     out << "==================================================";
     return out.str();
-  }
-
-  void printStatus() {
-    const auto text = buildStatusText();
-    std::printf("%s\n> ", text.c_str());
   }
 
   void handleStatusService(
@@ -570,6 +578,7 @@ private:
       current_z_.store(*z_mm);
     }
     current_yaw_deg_.store(*yaw_deg);
+    last_pose_time_ms_.store(nowMs());
 
     if (mode_ == Mode::kLocalization && !localization_confirmed_.load()) {
       return;
@@ -623,8 +632,9 @@ private:
         initial_position_stabilization_seconds_,
         initial_position_sample_seconds_, initial_position_topic_.c_str());
     std::printf("\n============================================================\n");
-    std::printf(" R2 位姿上报节点已启动：q；r1/r2 仅用于 localization 重定位\n");
-    std::printf("============================================================\n> ");
+    std::printf(" R2 位姿上报节点已启动：持续单行输出位姿状态\n");
+    std::printf(" 完整状态服务: ros2 service call /r2_pose_reporter/report_status std_srvs/srv/Trigger {}\n");
+    std::printf("============================================================\n");
   }
 
   Mode mode_{Mode::kOdometry};
@@ -650,6 +660,7 @@ private:
   double stationary_guard_lock_radius_mm_{45.0};
   double stationary_guard_yaw_threshold_deg_{2.0};
   double stationary_guard_max_hold_drift_mm_{1800.0};
+  double status_line_interval_seconds_{0.2};
   bool stationary_guard_have_last_{false};
   bool stationary_guard_locked_{false};
   std::uint64_t stationary_guard_last_time_ms_{0};
@@ -678,14 +689,15 @@ private:
   std::atomic<std::int16_t> stationary_guard_anchor_y_atomic_{0};
   std::atomic<std::int16_t> stationary_guard_anchor_yaw_atomic_{0};
   std::atomic<std::uint64_t> stationary_guard_hold_count_{0};
+  std::atomic<std::uint64_t> last_pose_time_ms_{0};
 
-  std::thread keyboard_thread_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr localized_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Publisher<r2_serial::msg::InitialPosition>::SharedPtr
       initial_position_pub_;
   rclcpp::Publisher<r2_serial::msg::CurrentPose>::SharedPtr current_pose_pub_;
+  rclcpp::TimerBase::SharedPtr status_line_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr relocalization_client_;
 
