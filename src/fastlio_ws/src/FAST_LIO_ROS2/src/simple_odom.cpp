@@ -131,7 +131,8 @@ private:
         "initial_position.sample_seconds", 5.0);
     base_offset_x_ = declare_parameter<double>("base_offset.x", 0.0847);
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2183);
-
+    tilt_correction_pitch_deg_ = declare_parameter<double>(
+        "tilt_correction.pitch_deg", 0.0);
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
@@ -150,6 +151,10 @@ private:
     if (!std::isfinite(base_offset_x_) || !std::isfinite(base_offset_y_)) {
       throw std::invalid_argument("二维车体外参必须是有限数值");
     }
+    if (!std::isfinite(tilt_correction_pitch_deg_)) {
+      throw std::invalid_argument("Y轴倾角修正必须是有限数值");
+    }
+    tilt_correction_pitch_rad_ = tilt_correction_pitch_deg_ * M_PI / 180.0;
   }
 
   std::optional<std::int16_t> checkedInt16(double value,
@@ -316,6 +321,8 @@ private:
         << " mm | Y: " << current_y_.load()
         << " mm | Z: " << current_z_.load()
         << " mm | Yaw: " << current_yaw_deg_.load() << " deg\n";
+    out << "Y轴倾角修正 : " << tilt_correction_pitch_deg_
+        << " deg（0 表示关闭；正值按右手系绕 +Y 旋转）\n";
     if (mode_ == Mode::kLocalization) {
       out << "定位有效状态 : "
           << (localization_confirmed_.load() ? "有效" : "无效/等待重定位") << "\n";
@@ -377,9 +384,15 @@ private:
   }
 
   void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    const double lidar_z = msg->pose.pose.position.z;
-    const double lidar_x = msg->pose.pose.position.x;
-    const double lidar_y = msg->pose.pose.position.y;
+    const double raw_lidar_x = msg->pose.pose.position.x;
+    const double raw_lidar_y = msg->pose.pose.position.y;
+    const double raw_lidar_z = msg->pose.pose.position.z;
+
+    const double cos_pitch = std::cos(tilt_correction_pitch_rad_);
+    const double sin_pitch = std::sin(tilt_correction_pitch_rad_);
+    const double lidar_x = cos_pitch * raw_lidar_x + sin_pitch * raw_lidar_z;
+    const double lidar_y = raw_lidar_y;
+    const double lidar_z = -sin_pitch * raw_lidar_x + cos_pitch * raw_lidar_z;
 
     const tf2::Quaternion q(
         msg->pose.pose.orientation.x, msg->pose.pose.orientation.y,
@@ -444,6 +457,9 @@ private:
     RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
                 base_offset_x_, base_offset_y_);
     RCLCPP_INFO(get_logger(),
+                "Y轴倾角修正: pitch=%.3f deg（默认 0，不改变输出）",
+                tilt_correction_pitch_deg_);
+    RCLCPP_INFO(get_logger(),
                 "odometry 模式不执行启动锚点、runtime_offset 或坐标平移");
     RCLCPP_INFO(
         get_logger(),
@@ -468,6 +484,8 @@ private:
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
+  double tilt_correction_pitch_deg_{0.0};
+  double tilt_correction_pitch_rad_{0.0};
   double initial_position_stabilization_seconds_{2.0};
   double initial_position_sample_seconds_{5.0};
 
