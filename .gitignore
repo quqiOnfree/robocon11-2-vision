@@ -4,5 +4,7 @@ install/
 log/
 .cache/
 __pycache__/
+.claude/
+CLAUDE.md
 maps/
 bag_files/

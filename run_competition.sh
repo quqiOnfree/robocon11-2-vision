@@ -155,8 +155,7 @@ start_process "路径规划" ros2 run path_planning_node path_planning_node
 sleep 1
 start_process "r2_serial 串口收发" \
   ros2 launch r2_serial r2_data_downlink.launch.py \
-    serial_port:="$SERIAL_PORT" serial_debug_raw:=false \
-    match_zone_topic:=/r2/match_zone
+    serial_port:="$SERIAL_PORT" serial_debug_raw:=false
 start_process "手输方块 GUI" ros2 run hand_input_path hand_input_path_node
 
 sleep 2
@@ -180,8 +179,7 @@ printf '%b\n' "${GREEN}=========================================================
 set +e
 ros2 run fast_lio simple_odom --ros-args \
   -p mode:="$MODE" -p zone:="$ZONE" \
-  -p odom_topic:="$ODOM_TOPIC" -p localized_topic:=/r2/localized \
-  -p match_zone_topic:=/r2/match_zone
+  -p odom_topic:="$ODOM_TOPIC" -p localized_topic:=/r2/localized
 status=$?
 set -e
 exit "$status"

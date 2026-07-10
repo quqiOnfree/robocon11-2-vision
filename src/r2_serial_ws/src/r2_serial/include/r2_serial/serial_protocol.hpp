@@ -6,9 +6,18 @@
 
 namespace r2_serial::protocol {
 
-// 上位机 -> 下位机：当前比赛半区，payload 为 int16_t（0=蓝，1=红）。
-inline constexpr std::uint16_t kMatchZone = 0x0000;
-inline constexpr std::uint16_t kMatchZoneAck = 0x000A;
+// 上位机 -> 下位机：合并启动配置，payload 为 7×int16_t LE。
+//   struct startup_config {
+//     area_type area_type_value;        // 0=blue, 1=red
+//     begin_type begin_type_value;      // 0=一区, 1=二区, 2=三区坡前, 3=三区重试
+//     int16_t origin_x;                 // 起点 X (mm)
+//     int16_t origin_y;                 // 起点 Y (mm)
+//     int16_t kfs_amount;               // 车内初始方块数量 0~3
+//     int16_t arena_load_kfs_amount;    // 三区加载方块数量 0~2
+//     int16_t arena_delay_seconds;      // 三区启动等待秒数 10~60
+//   };
+inline constexpr std::uint16_t kStartupConfig = 0x0000;
+inline constexpr std::uint16_t kStartupConfigAck = 0x000A;
 
 // 视觉与下位机共享的消息：0x0001 是视觉下发跟随量；0x0002/0x0003/0x0004 都按下位机视觉状态控制处理。
 inline constexpr std::uint16_t kVisionFollow = 0x0001;
@@ -50,6 +59,9 @@ inline constexpr std::uint16_t kPathReplaceKfs = 0x031A;
 inline constexpr std::uint16_t kPathNoCommand = 0x031B;
 inline constexpr std::uint16_t kPathTurnAround180 = 0x031C;
 inline constexpr std::uint16_t kPathRequestNextNew = 0x031D;
+
+// 下位机 -> 上位机：调试消息，变长 char 数据。
+inline constexpr std::uint16_t kDebugMessage = 0x0501;
 
 // STM32 payload 里的 int16_t 使用小端序；协议头、长度、code、CRC 仍是大端序。
 inline void appendInt16Le(std::vector<std::uint8_t> &payload,

@@ -1,7 +1,6 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <std_msgs/msg/bool.hpp>
-#include <std_msgs/msg/int8.hpp>
 #include <std_srvs/srv/trigger.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2/utils.h>
@@ -22,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "r2_serial/msg/current_pose.hpp"
 #include "r2_serial/msg/initial_position.hpp"
 #include "r2_serial/msg/serial_packet.hpp"
 #include "r2_serial/serial_protocol.hpp"
@@ -30,8 +30,8 @@ namespace protocol = r2_serial::protocol;
 
 class R2PoseReporter : public rclcpp::Node {
 public:
-  enum class Zone : std::int8_t { kUnlocked = -1, kBlue = 0, kRed = 1 };
   enum class Mode : std::uint8_t { kLocalization, kOdometry };
+  enum class Zone : std::uint8_t { kBlue = 0, kRed = 1 };
 
   R2PoseReporter() : Node("r2_pose_reporter") {
     readParameters();
@@ -39,10 +39,10 @@ public:
 
     downlink_packet_pub_ = create_publisher<r2_serial::msg::SerialPacket>(
         downlink_packet_topic_, 50);
-    match_zone_pub_ = create_publisher<std_msgs::msg::Int8>(
-        match_zone_topic_, rclcpp::QoS(1).transient_local().reliable());
     initial_position_pub_ = create_publisher<r2_serial::msg::InitialPosition>(
         initial_position_topic_, rclcpp::QoS(1).transient_local().reliable());
+    current_pose_pub_ = create_publisher<r2_serial::msg::CurrentPose>(
+        current_pose_topic_, 20);
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic_, 20,
         std::bind(&R2PoseReporter::odomCallback, this, std::placeholders::_1));
@@ -59,10 +59,6 @@ public:
                   std::placeholders::_1, std::placeholders::_2));
     relocalization_client_ = create_client<std_srvs::srv::Trigger>(
         relocalization_service_name_);
-
-    if (configured_zone_ != Zone::kUnlocked) {
-      lockZone(configured_zone_, "启动参数");
-    }
 
     if (mode_ == Mode::kOdometry) {
       localization_confirmed_.store(true);
@@ -88,29 +84,22 @@ private:
     return value;
   }
 
-  static const char *zoneName(Zone zone) {
-    switch (zone) {
-    case Zone::kBlue:
-      return "Blue";
-    case Zone::kRed:
-      return "Red";
-    default:
-      return "Unlocked";
-    }
-  }
-
   static const char *modeName(Mode mode) {
     return mode == Mode::kLocalization ? "localization" : "odometry";
+  }
+
+  static const char *zoneName(Zone zone) {
+    return zone == Zone::kBlue ? "Blue" : "Red";
   }
 
   void readParameters() {
     odom_topic_ = declare_parameter<std::string>("odom_topic", "/Odometry");
     downlink_packet_topic_ = declare_parameter<std::string>(
         "downlink_packet_topic", "/r2_serial/downlink/packet");
-    match_zone_topic_ = declare_parameter<std::string>(
-        "match_zone_topic", "/r2/match_zone");
     initial_position_topic_ = declare_parameter<std::string>(
         "initial_position_topic", "/r2/initial_position");
+    current_pose_topic_ = declare_parameter<std::string>(
+        "current_pose_topic", "/r2/current_pose_mm");
     localized_topic_ = declare_parameter<std::string>(
         "localized_topic", "/r2/localized");
     status_service_name_ = declare_parameter<std::string>(
@@ -129,9 +118,9 @@ private:
 
     const auto zone = lower(declare_parameter<std::string>("zone", "blue"));
     if (zone == "blue") {
-      configured_zone_ = Zone::kBlue;
+      zone_ = Zone::kBlue;
     } else if (zone == "red") {
-      configured_zone_ = Zone::kRed;
+      zone_ = Zone::kRed;
     } else {
       throw std::invalid_argument("zone 必须显式指定为 blue 或 red");
     }
@@ -140,8 +129,8 @@ private:
         "initial_position.stabilization_seconds", 2.0);
     initial_position_sample_seconds_ = declare_parameter<double>(
         "initial_position.sample_seconds", 5.0);
-    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.1352);
-    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2335);
+    base_offset_x_ = declare_parameter<double>("base_offset.x", 0.0847);
+    base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2183);
 
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
@@ -184,23 +173,6 @@ private:
     protocol::appendInt16Le(payload, y_mm);
     protocol::appendInt16Le(payload, yaw_deg);
     return payload;
-  }
-
-  void publishMatchZone(Zone zone) {
-    if (zone == Zone::kUnlocked || !match_zone_pub_) {
-      return;
-    }
-    std_msgs::msg::Int8 msg;
-    msg.data = static_cast<std::int8_t>(zone);
-    match_zone_pub_->publish(msg);
-  }
-
-  void lockZone(Zone zone, const char *reason) {
-    zone_.store(zone);
-    publishMatchZone(zone);
-    RCLCPP_INFO(get_logger(),
-                "================ [Zone Detected] Locked to %s zone (%s) ================",
-                zone == Zone::kBlue ? "BLUE" : "RED", reason);
   }
 
   void processInitialPosition(double x_mm, double y_mm) {
@@ -339,6 +311,7 @@ private:
     std::ostringstream out;
     out << "\n================ [R2 位姿上报状态] ================\n";
     out << "运行模式     : " << modeName(mode_) << "\n";
+    out << "当前锁定半区 : " << zoneName(zone_) << "\n";
     out << "车体中心坐标 : X: " << current_x_.load()
         << " mm | Y: " << current_y_.load()
         << " mm | Z: " << current_z_.load()
@@ -349,7 +322,6 @@ private:
     } else {
       out << "定位有效状态 : 纯里程计直通（不适用）\n";
     }
-    out << "当前锁定半区 : " << zoneName(zone_.load()) << "\n";
     if (initial_position_published_.load()) {
       out << "启动平均坐标 : X: " << initial_position_x_mm_.load()
           << " mm | Y: " << initial_position_y_mm_.load()
@@ -455,13 +427,20 @@ private:
     output_x_.store(*serial_x);
     output_y_.store(*serial_y);
     output_yaw_deg_.store(*serial_yaw);
+
+    r2_serial::msg::CurrentPose pose_msg;
+    pose_msg.x_mm = *serial_x;
+    pose_msg.y_mm = *serial_y;
+    pose_msg.yaw_deg = *serial_yaw;
+    current_pose_pub_->publish(pose_msg);
+
     publishPosition(*serial_x, *serial_y, *serial_yaw);
   }
 
   void printStartupSummary() {
     RCLCPP_INFO(get_logger(),
                 "R2 pose reporter: mode=%s zone=%s odom=%s",
-                modeName(mode_), zoneName(configured_zone_), odom_topic_.c_str());
+                modeName(mode_), zoneName(zone_), odom_topic_.c_str());
     RCLCPP_INFO(get_logger(), "二维车体外参: x=%.4f m y=%.4f m",
                 base_offset_x_, base_offset_y_);
     RCLCPP_INFO(get_logger(),
@@ -477,13 +456,12 @@ private:
   }
 
   Mode mode_{Mode::kOdometry};
-  Zone configured_zone_{Zone::kUnlocked};
-  std::atomic<Zone> zone_{Zone::kUnlocked};
+  Zone zone_{Zone::kBlue};
 
   std::string odom_topic_;
   std::string downlink_packet_topic_;
-  std::string match_zone_topic_;
   std::string initial_position_topic_;
+  std::string current_pose_topic_;
   std::string localized_topic_;
   std::string status_service_name_;
   std::string relocalization_service_name_;
@@ -507,9 +485,9 @@ private:
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr localized_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
-  rclcpp::Publisher<std_msgs::msg::Int8>::SharedPtr match_zone_pub_;
   rclcpp::Publisher<r2_serial::msg::InitialPosition>::SharedPtr
       initial_position_pub_;
+  rclcpp::Publisher<r2_serial::msg::CurrentPose>::SharedPtr current_pose_pub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
   rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr relocalization_client_;
 
