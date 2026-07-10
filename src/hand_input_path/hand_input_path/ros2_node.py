@@ -102,6 +102,7 @@ class Ros2Node(Node):
                              for row in grid["grid"]]
         grid_data["level"] = [[block_level.value for block_level in row]
                               for row in grid["level"]]
+        grid_data["is_blue_scene"] = grid["is_blue_scene"]
         json_data = json.dumps(grid_data)
         msg = String()
         msg.data = json_data
