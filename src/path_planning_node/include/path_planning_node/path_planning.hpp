@@ -114,10 +114,10 @@ public:
     }
     result.push(command::move_to_col2);
     if (m_map[1][1] == kfs_type::r2kfs) {
-        result.push(command::grab_higher_r2_kfs);
-        m_map[1][1] = kfs_type::empty;
-        ++r2kfs_count;
-      }
+      result.push(command::grab_higher_r2_kfs);
+      m_map[1][1] = kfs_type::empty;
+      ++r2kfs_count;
+    }
 
     m_map[0][0] = kfs_type::falsekfs;
     m_map[2][0] = kfs_type::falsekfs;

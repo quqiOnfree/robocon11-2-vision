@@ -248,5 +248,6 @@ class MainWindow(QMainWindow):
         grid["grid"] = self.get_kfs_type()
         grid["level"] = [[item.block_level for item in row]
                          for row in self.grid_items]
+        grid["is_blue_scene"] = (self.scene_index == 0)
         self.emit_grid.emit(grid)
         QMessageBox.information(self, "发布成功", "方格数据已发布到 ROS2！")
