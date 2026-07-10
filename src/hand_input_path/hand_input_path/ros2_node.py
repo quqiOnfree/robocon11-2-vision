@@ -46,10 +46,17 @@ class Ros2Node(Node):
             "current_pose_topic", "/r2/current_pose_mm").value
         self.current_pose_sub = self.create_subscription(
             CurrentPose, current_pose_topic, self.current_pose_callback, 20)
+        # /r2/localized 和 /r2/fitness_score 使用 TRANSIENT_LOCAL，
+        # 确保 GUI 在定位完成后启动也能收到已发布的状态。
+        loc_fit_qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         self.localized_sub = self.create_subscription(
-            Bool, "/r2/localized", self.localized_callback, 10)
+            Bool, "/r2/localized", self.localized_callback, loc_fit_qos)
         self.fitness_sub = self.create_subscription(
-            Float64, "/r2/fitness_score", self.fitness_callback, 10)
+            Float64, "/r2/fitness_score", self.fitness_callback, loc_fit_qos)
         self.uplink_event_sub = self.create_subscription(
             UInt16, "/r2_serial/uplink/event_code", self.uplink_event_callback, 10)
         self.debug_msg_sub = self.create_subscription(
@@ -74,6 +81,7 @@ class Ros2Node(Node):
         self._last_localized = None
         self._last_fitness = None
         self._last_connection = None
+        self._last_mcu_event = None
 
         # 起点坐标缓存（来自 /r2/initial_position，启动时发布一次）
         self._initial_x = None
@@ -101,7 +109,9 @@ class Ros2Node(Node):
         print("Published grid data:", json_data)
 
     def publish_startup_config(self, area_type: int, begin_type: int,
-                                kfs_amount: int = 0) -> bool:
+                                kfs_amount: int = 0,
+                                arena_load_kfs_amount: int = 0,
+                                arena_delay_seconds: int = 10) -> bool:
         if self._initial_x is None or self._initial_y is None:
             self.get_logger().warn("尚未收到起点坐标，无法发送启动配置")
             return False
@@ -111,11 +121,15 @@ class Ros2Node(Node):
         msg.origin_x = self._initial_x
         msg.origin_y = self._initial_y
         msg.kfs_amount = kfs_amount
+        msg.arena_load_kfs_amount = arena_load_kfs_amount
+        msg.arena_delay_seconds = arena_delay_seconds
         self.startup_config_pub.publish(msg)
         self.get_logger().info(
             f"已发送合并启动配置: area={area_type} begin={begin_type} "
             f"origin=({self._initial_x}, {self._initial_y}) "
-            f"kfs_amount={kfs_amount}")
+            f"kfs_amount={kfs_amount} "
+            f"arena_load_kfs={arena_load_kfs_amount} "
+            f"delay={arena_delay_seconds}s")
         return True
 
     def clear_lidar_cache(self):
@@ -129,6 +143,7 @@ class Ros2Node(Node):
         self._last_localized = None
         self._last_fitness = None
         self._last_connection = None
+        self._last_mcu_event = None
 
     @property
     def has_initial_position(self) -> bool:
@@ -171,7 +186,10 @@ class Ros2Node(Node):
             self.path_signal.fitness_signal.emit(msg.data)
 
     def uplink_event_callback(self, msg: UInt16):
-        self.path_signal.mcu_event_signal.emit(int(msg.data))
+        code = int(msg.data)
+        if self._last_mcu_event != code:
+            self._last_mcu_event = code
+            self.path_signal.mcu_event_signal.emit(code)
 
     def debug_msg_callback(self, msg: String):
         self.path_signal.debug_msg_signal.emit(msg.data)

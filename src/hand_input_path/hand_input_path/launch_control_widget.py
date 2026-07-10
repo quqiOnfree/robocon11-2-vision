@@ -137,8 +137,62 @@ class LaunchControlWidget(QWidget):
         block_col.addStretch()
         top_row.addLayout(block_col)
 
+        # 右二列：三区额外配置（仅三区启动时生效）
+        arena_col = QVBoxLayout()
+        arena_title = QLabel("三区额外配置")
+        arena_title.setFont(QFont("Arial", 14, QFont.Bold))
+        arena_col.addWidget(arena_title)
+
+        load_label = QLabel("加载方块:")
+        load_label.setFont(QFont("Arial", 12))
+        arena_col.addWidget(load_label)
+        load_row = QHBoxLayout()
+        self.arena_load_kfs_group = QButtonGroup(self)
+        for i in range(3):  # 0, 1, 2
+            radio = QRadioButton(f"{i} 个")
+            radio.setFont(QFont("Arial", 14))
+            self.arena_load_kfs_group.addButton(radio, i)
+            load_row.addWidget(radio)
+            if i == 0:
+                radio.setChecked(True)
+        arena_col.addLayout(load_row)
+
+        delay_label = QLabel("等待秒数:")
+        delay_label.setFont(QFont("Arial", 12))
+        arena_col.addWidget(delay_label)
+        self.arena_delay_group = QButtonGroup(self)
+        delay_values = [10, 15, 20, 25, 30, 40, 50, 60]
+        delay_row1 = QHBoxLayout()
+        delay_row2 = QHBoxLayout()
+        for idx, val in enumerate(delay_values):
+            radio = QRadioButton(f"{val}s")
+            radio.setFont(QFont("Arial", 14))
+            self.arena_delay_group.addButton(radio, val)
+            if idx < 4:
+                delay_row1.addWidget(radio)
+            else:
+                delay_row2.addWidget(radio)
+            if val == 10:
+                radio.setChecked(True)
+        arena_col.addLayout(delay_row1)
+        arena_col.addLayout(delay_row2)
+        arena_col.addStretch()
+
+        top_row.addLayout(arena_col)
+
         layout.addLayout(top_row)
         layout.addSpacing(10)
+
+        # 收集三区配置控件，用于根据 zone 选择启用/禁用
+        self._arena_widgets = [arena_title, load_label, delay_label]
+        for btn in self.arena_load_kfs_group.buttons():
+            self._arena_widgets.append(btn)
+        for btn in self.arena_delay_group.buttons():
+            self._arena_widgets.append(btn)
+
+        # zone 切换时启用/禁用三区配置
+        self.zone_group.idToggled.connect(self._on_zone_changed)
+        self._on_zone_changed(self.zone_group.checkedId(), True)
 
         # ── 下半部分：操作按钮（横向）──
         btn_row = QHBoxLayout()
@@ -167,6 +221,20 @@ class LaunchControlWidget(QWidget):
 
     def get_block_count(self) -> int:
         return self.block_count_group.checkedId()
+
+    def get_arena_load_kfs(self) -> int:
+        return self.arena_load_kfs_group.checkedId()
+
+    def get_arena_delay(self) -> int:
+        return self.arena_delay_group.checkedId()
+
+    def _on_zone_changed(self, zone_id: int, checked: bool):
+        """仅三区（坡前=2, 重试=3）时启用额外配置控件。"""
+        if not checked:
+            return
+        enabled = zone_id in (2, 3)
+        for w in self._arena_widgets:
+            w.setEnabled(enabled)
 
     def _on_toggle_radar(self):
         if self._radar_running:
@@ -292,7 +360,8 @@ class LaunchControlWidget(QWidget):
             return
         dialog = CountdownDialog(3, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            if not ros_node.publish_startup_config(scene_index, zone,
-                                                       self.get_block_count()):
+            if not ros_node.publish_startup_config(
+                    scene_index, zone, self.get_block_count(),
+                    self.get_arena_load_kfs(), self.get_arena_delay()):
                 QMessageBox.warning(self, "发送失败",
                                     "启动配置发送失败，请确认已收到起点坐标。")

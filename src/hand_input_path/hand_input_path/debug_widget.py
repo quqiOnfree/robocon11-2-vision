@@ -6,10 +6,11 @@ from PySide6.QtWidgets import (
     QTextEdit,
     QTabWidget,
 )
-from PySide6.QtGui import QFont, QColor, QTextCursor
+from PySide6.QtGui import QFont, QColor
 from PySide6.QtCore import Qt, Signal, QObject
 
 MAX_LINES = 500
+MAX_BUFFER = 5000
 
 TABS = [
     ("MCU", 0),
@@ -44,6 +45,8 @@ _debug_signal = _DebugSignal()
 def emit_debug_line(tag: str, line: str):
     """模块级入口, 供 subprocess reader 线程调用. widget 未打开时自动缓存."""
     _line_buffer.append((tag, line))
+    while len(_line_buffer) > MAX_BUFFER:
+        _line_buffer.pop(0)
     _debug_signal.line_signal.emit(tag, line)
 
 
@@ -62,7 +65,6 @@ class DebugWidget(QWidget):
         )
 
         self._editors = []
-        self._line_counts = []
         for name, _ in TABS:
             tab = QWidget()
             tab_layout = QVBoxLayout(tab)
@@ -75,18 +77,21 @@ class DebugWidget(QWidget):
                 f"background-color: {QColor('black').name()}; "
                 f"color: {QColor('lime').name()};"
             )
+            editor.document().setMaximumBlockCount(MAX_LINES)
             tab_layout.addWidget(editor)
             self.tab_widget.addTab(tab, name)
             self._editors.append(editor)
-            self._line_counts.append(0)
 
         layout.addWidget(self.tab_widget)
 
         # ── 连接信号 ──
         _debug_signal.line_signal.connect(self._on_debug_line)
 
-        # 回放 widget 打开前缓存的 subprocess 输出
-        for tag, line in _line_buffer:
+        # 回放 widget 打开前缓存的 subprocess 输出，然后清空
+        # 避免后续 queued signal 到达时重复追加
+        replay = list(_line_buffer)
+        _line_buffer.clear()
+        for tag, line in replay:
             self._on_debug_line(tag, line)
 
     def update_debug_msg(self, text: str):
@@ -94,28 +99,13 @@ class DebugWidget(QWidget):
         self.append_to_tab(0, text)
 
     def append_to_tab(self, tab_index: int, text: str):
-        """追加文本到指定 tab."""
+        """追加文本到指定 tab（行数由 QTextDocument.maximumBlockCount 自动限制）。"""
         if tab_index < 0 or tab_index >= len(self._editors):
             return
-        editor = self._editors[tab_index]
-        editor.append(text)
-        self._line_counts[tab_index] += 1
-        self._trim_tab(tab_index)
+        self._editors[tab_index].append(text)
 
     def _on_debug_line(self, tag: str, line: str):
         tab_index = TAG_TO_TAB.get(tag)
         if tab_index is not None:
             self.append_to_tab(tab_index, line)
 
-    def _trim_tab(self, tab_index: int):
-        if self._line_counts[tab_index] <= MAX_LINES:
-            return
-        editor = self._editors[tab_index]
-        excess = self._line_counts[tab_index] - MAX_LINES
-        cursor = editor.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        for _ in range(excess):
-            cursor.movePosition(QTextCursor.MoveOperation.Down,
-                                QTextCursor.MoveMode.KeepAnchor)
-        cursor.removeSelectedText()
-        self._line_counts[tab_index] = MAX_LINES

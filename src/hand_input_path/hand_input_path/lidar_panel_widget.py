@@ -11,6 +11,7 @@ from PySide6.QtGui import QFont
 
 # MCU 事件码 → 中文描述
 EVENT_MAP = {
+    0x000A: "启动配置确认",
     0x0201: "运动完成",
     0x0202: "高位模式已进入",
     0x0203: "降位完成",
@@ -18,6 +19,7 @@ EVENT_MAP = {
     0x0205: "下台阶完成",
     0x0206: "急停完成",
     0x0301: "路径请求",
+    0x031D: "路径请求(带索引)",
 }
 
 
@@ -143,6 +145,9 @@ class LidarPanelWidget(QWidget):
         # 连接状态
         if node._last_connection is not None:
             self.update_connection(node._last_connection)
+        # MCU 事件
+        if node._last_mcu_event is not None:
+            self.update_mcu_event(node._last_mcu_event)
 
     def update_initial_position(self, x_mm: int, y_mm: int):
         self.start_x_label.setText(f"X: {x_mm} mm")
@@ -164,5 +169,5 @@ class LidarPanelWidget(QWidget):
         self.mcu_label.setText("MCU 事件: --")
 
     def update_mcu_event(self, event_code: int):
-        desc = EVENT_MAP.get(event_code, f"未知事件")
+        desc = EVENT_MAP.get(event_code, f"未知事件 (0x{event_code:04X})")
         self.mcu_label.setText(f"MCU 事件: 0x{event_code:04X} {desc}")

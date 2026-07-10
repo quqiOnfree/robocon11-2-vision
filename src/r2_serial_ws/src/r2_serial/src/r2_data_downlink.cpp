@@ -402,17 +402,21 @@ private:
         startup_config_topic_, 10,
         [this](const r2_serial::msg::StartupConfig::SharedPtr msg) {
           std::vector<std::uint8_t> payload;
-          payload.reserve(10);
+          payload.reserve(14);
           protocol::appendInt16Le(payload, msg->area_type);
           protocol::appendInt16Le(payload, msg->begin_type);
           protocol::appendInt16Le(payload, msg->origin_x);
           protocol::appendInt16Le(payload, msg->origin_y);
           protocol::appendInt16Le(payload, msg->kfs_amount);
+          protocol::appendInt16Le(payload, msg->arena_load_kfs_amount);
+          protocol::appendInt16Le(payload, msg->arena_delay_seconds);
           sendPacket(protocol::kStartupConfig, payload, false);
           RCLCPP_INFO(get_logger(),
-              "发送合并启动配置: area=%d begin=%d origin=(%d,%d) kfs_amount=%d",
+              "发送合并启动配置: area=%d begin=%d origin=(%d,%d)"
+              " kfs=%d arena_load_kfs=%d delay=%ds",
               msg->area_type, msg->begin_type, msg->origin_x, msg->origin_y,
-              msg->kfs_amount);
+              msg->kfs_amount,
+              msg->arena_load_kfs_amount, msg->arena_delay_seconds);
         });
 
     if (!pose_odom_topic_.empty()) {
