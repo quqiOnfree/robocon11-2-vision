@@ -18,7 +18,6 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <vector>
 
 #include "r2_serial/msg/current_pose.hpp"
@@ -57,15 +56,15 @@ public:
         status_service_name_,
         std::bind(&R2PoseReporter::handleStatusService, this,
                   std::placeholders::_1, std::placeholders::_2));
-    relocalization_client_ = create_client<std_srvs::srv::Trigger>(
-        relocalization_service_name_);
-
     if (mode_ == Mode::kOdometry) {
       localization_confirmed_.store(true);
     }
 
-    keyboard_thread_ = std::thread(&R2PoseReporter::keyboardLoop, this);
-    keyboard_thread_.detach();
+    status_line_timer_ = create_wall_timer(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(status_line_interval_seconds_)),
+        std::bind(&R2PoseReporter::printStatusLine, this));
+
 
     printStartupSummary();
   }
@@ -104,9 +103,6 @@ private:
         "localized_topic", "/r2/localized");
     status_service_name_ = declare_parameter<std::string>(
         "status_service_name", "/r2_pose_reporter/report_status");
-    relocalization_service_name_ = declare_parameter<std::string>(
-        "relocalization_service_name", "/r2/trigger_relocalization");
-
     const auto mode = lower(declare_parameter<std::string>("mode", "odometry"));
     if (mode == "localization") {
       mode_ = Mode::kLocalization;
@@ -133,6 +129,8 @@ private:
     base_offset_y_ = declare_parameter<double>("base_offset.y", -0.2183);
     tilt_correction_pitch_deg_ = declare_parameter<double>(
         "tilt_correction.pitch_deg", 0.0);
+    status_line_interval_seconds_ = declare_parameter<double>(
+        "status_line.interval_seconds", 0.2);
 
     const auto deprecated_serial_port = declare_parameter<std::string>("serial_port", "");
     (void)declare_parameter<bool>("serial_debug_raw", false);
@@ -155,6 +153,8 @@ private:
       throw std::invalid_argument("Y轴倾角修正必须是有限数值");
     }
     tilt_correction_pitch_rad_ = tilt_correction_pitch_deg_ * M_PI / 180.0;
+    status_line_interval_seconds_ =
+        std::max(0.05, status_line_interval_seconds_);
   }
 
   std::optional<std::int16_t> checkedInt16(double value,
@@ -249,61 +249,27 @@ private:
         static_cast<int>(*mean_y), initial_position_sample_count_);
   }
 
-  void triggerRelocalization(const char *command) {
-    localization_confirmed_.store(false);
-    if (!relocalization_client_->service_is_ready()) {
-      RCLCPP_ERROR(get_logger(),
-                   "%s 失败：服务 %s 不可用，保持停止 0x0101 下发",
-                   command, relocalization_service_name_.c_str());
-      return;
-    }
-    auto request = std::make_shared<std_srvs::srv::Trigger::Request>();
-    relocalization_client_->async_send_request(
-        request,
-        [this, command](rclcpp::Client<std_srvs::srv::Trigger>::SharedFuture future) {
-          try {
-            const auto response = future.get();
-            if (response->success) {
-              RCLCPP_WARN(get_logger(), "%s 已触发全局重定位: %s", command,
-                          response->message.c_str());
-            } else {
-              RCLCPP_ERROR(get_logger(), "%s 重定位请求被拒绝: %s", command,
-                           response->message.c_str());
-            }
-          } catch (const std::exception &e) {
-            RCLCPP_ERROR(get_logger(), "%s 重定位服务异常: %s", command, e.what());
-          }
-        });
-  }
+  void printStatusLine() const {
+    const auto now = nowMs();
+    const auto last_pose = last_pose_time_ms_.load();
+    const auto last_send = last_publish_time_ms_.load();
+    const bool have_pose = last_pose != 0;
+    const bool have_send = last_send != 0;
+    const bool downlink_connected =
+        downlink_packet_pub_ && downlink_packet_pub_->get_subscription_count() > 0;
 
-  void handleRecoveryCommand(bool retry_area) {
-    const char *command = retry_area ? "r2" : "r1";
-    if (mode_ == Mode::kLocalization) {
-      triggerRelocalization(command);
-      return;
-    }
-    RCLCPP_WARN(get_logger(),
-                "%s 在 odometry 模式下不会修改坐标；纯里程计仅输出原始相对位姿",
-                command);
-  }
-
-  void keyboardLoop() {
-    std::string line;
-    while (rclcpp::ok() && std::getline(std::cin, line)) {
-      line = lower(line);
-      line.erase(std::remove_if(line.begin(), line.end(),
-                                [](unsigned char c) { return std::isspace(c); }),
-                 line.end());
-      if (line == "q") {
-        printStatus();
-      } else if (line == "r1") {
-        handleRecoveryCommand(false);
-      } else if (line == "r2") {
-        handleRecoveryCommand(true);
-      } else if (!line.empty()) {
-        std::printf("\n[r2_pose_reporter] 支持命令: q / r1 / r2\n> ");
-      }
-    }
+    std::printf(
+        "\rPOSE mode=%s zone=%s xyz=(%d,%d,%d) yaw=%d out=(%d,%d) yaw=%d "
+        "tilt=%.2f serial=%s pose_age=%s send_age=%s pub=%lu drop=%lu        ",
+        modeName(mode_), zoneName(zone_), current_x_.load(), current_y_.load(),
+        current_z_.load(), current_yaw_deg_.load(), output_x_.load(),
+        output_y_.load(), output_yaw_deg_.load(), tilt_correction_pitch_deg_,
+        downlink_connected ? "Y" : "N",
+        have_pose ? std::to_string(now - last_pose).c_str() : "NA",
+        have_send ? std::to_string(now - last_send).c_str() : "NA",
+        static_cast<unsigned long>(publish_success_count_.load()),
+        static_cast<unsigned long>(publish_failure_count_.load()));
+    std::fflush(stdout);
   }
 
   std::string buildStatusText() const {
@@ -347,7 +313,6 @@ private:
     } else {
       out << "ROS发布状态  : 尚未发布 0x0101\n";
     }
-    out << "命令         : q=查询完整状态；r1/r2=仅 localization 触发重定位\n";
     out << "==================================================";
     return out.str();
   }
@@ -419,6 +384,7 @@ private:
       current_z_.store(*z_mm);
     }
     current_yaw_deg_.store(*yaw_deg);
+    last_pose_time_ms_.store(nowMs());
 
     if (mode_ == Mode::kLocalization && !localization_confirmed_.load()) {
       return;
@@ -467,7 +433,8 @@ private:
         initial_position_stabilization_seconds_,
         initial_position_sample_seconds_, initial_position_topic_.c_str());
     std::printf("\n============================================================\n");
-    std::printf(" R2 位姿上报节点已启动：q；r1/r2 仅用于 localization 重定位\n");
+    std::printf(" R2 位姿上报节点已启动：持续单行输出 xyz/yaw 位姿\n");
+    std::printf(" 完整状态服务: ros2 service call /r2_pose_reporter/report_status std_srvs/srv/Trigger {}\n");
     std::printf("============================================================\n> ");
   }
 
@@ -480,12 +447,12 @@ private:
   std::string current_pose_topic_;
   std::string localized_topic_;
   std::string status_service_name_;
-  std::string relocalization_service_name_;
 
   double base_offset_x_{0.1352};
   double base_offset_y_{-0.2335};
   double tilt_correction_pitch_deg_{0.0};
   double tilt_correction_pitch_rad_{0.0};
+  double status_line_interval_seconds_{0.2};
   double initial_position_stabilization_seconds_{2.0};
   double initial_position_sample_seconds_{5.0};
 
@@ -498,16 +465,16 @@ private:
   double initial_position_sum_y_mm_{0.0};
   std::atomic<std::int16_t> initial_position_x_mm_{0};
   std::atomic<std::int16_t> initial_position_y_mm_{0};
+  std::atomic<std::uint64_t> last_pose_time_ms_{0};
 
-  std::thread keyboard_thread_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr localized_sub_;
   rclcpp::Publisher<r2_serial::msg::SerialPacket>::SharedPtr downlink_packet_pub_;
   rclcpp::Publisher<r2_serial::msg::InitialPosition>::SharedPtr
       initial_position_pub_;
   rclcpp::Publisher<r2_serial::msg::CurrentPose>::SharedPtr current_pose_pub_;
+  rclcpp::TimerBase::SharedPtr status_line_timer_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr status_srv_;
-  rclcpp::Client<std_srvs::srv::Trigger>::SharedPtr relocalization_client_;
 
   std::atomic<std::int16_t> current_x_{0};
   std::atomic<std::int16_t> current_y_{0};
