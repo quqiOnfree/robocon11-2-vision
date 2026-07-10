@@ -171,6 +171,12 @@ private:
         "topics.path.no_command", "/r2_serial/downlink/path/no_command");
     path_turn_around_180_topic_ = declare_parameter<std::string>(
       "topics.path.turn_around_180", "/r2_serial/downlink/path/turn_around_180");
+    path_move_to_col1_topic_ = declare_parameter<std::string>(
+        "topics.path.move_to_col1", "/r2_serial/downlink/path/move_to_col1");
+    path_move_to_col2_topic_ = declare_parameter<std::string>(
+        "topics.path.move_to_col2", "/r2_serial/downlink/path/move_to_col2");
+    path_move_to_col3_topic_ = declare_parameter<std::string>(
+        "topics.path.move_to_col3", "/r2_serial/downlink/path/move_to_col3");
     startup_config_topic_ = declare_parameter<std::string>(
         "topics.startup_config", "/r2_serial/downlink/startup_config");
 
@@ -397,6 +403,12 @@ private:
         path_no_command_topic_, protocol::kPathNoCommand, false);
     path_turn_around_180_sub_ = createEmptyCommandSubscription(
         path_turn_around_180_topic_, protocol::kPathTurnAround180, false);
+    path_move_to_col1_sub_ = createEmptyCommandSubscription(
+        path_move_to_col1_topic_, protocol::kPathMoveToCol1, false);
+    path_move_to_col2_sub_ = createEmptyCommandSubscription(
+        path_move_to_col2_topic_, protocol::kPathMoveToCol2, false);
+    path_move_to_col3_sub_ = createEmptyCommandSubscription(
+        path_move_to_col3_topic_, protocol::kPathMoveToCol3, false);
 
     startup_config_sub_ = create_subscription<r2_serial::msg::StartupConfig>(
         startup_config_topic_, 10,
@@ -774,6 +786,9 @@ private:
   std::string path_replace_kfs_topic_;
   std::string path_no_command_topic_;
   std::string path_turn_around_180_topic_;
+  std::string path_move_to_col1_topic_;
+  std::string path_move_to_col2_topic_;
+  std::string path_move_to_col3_topic_;
 
   std::string uplink_packet_topic_;
   std::string uplink_packet_r2_topic_;
@@ -813,6 +828,9 @@ private:
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_no_command_sub_;
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_turn_around_180_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_move_to_col1_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_move_to_col2_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_move_to_col3_sub_;
   rclcpp::Subscription<r2_serial::msg::StartupConfig>::SharedPtr startup_config_sub_;
   rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_odom_sub_;
 

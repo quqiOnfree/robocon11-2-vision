@@ -41,7 +41,11 @@ public:
     grab_highest_r2_kfs = 0x0319,
     release_r2_kfs_and_grab_newer_r2_kfs = 0x031A,
     complete_task = 0x031B,
-    turn_around = 0x031C
+    turn_around = 0x031C,
+    request_new = 0x031D,
+    move_to_col1 = 0x031E,
+    move_to_col2 = 0x031F,
+    move_to_col3 = 0x0320
   };
 
   template <typename T,
@@ -75,29 +79,45 @@ public:
 
   std::pair<std::queue<command>, std::queue<path_node>> generate_commands(
       std::array<std::array<kfs_type, map_height>, map_width> m_map,
-      const std::array<std::array<map_level, map_height>, map_width> &map)
+      const std::array<std::array<map_level, map_height>, map_width> &map,
+      bool is_blue_scene)
       const {
     std::queue<command> result;
     std::size_t r2kfs_count = 0;
+
+    if (is_blue_scene) {
+      if (m_map[2][1] == kfs_type::r2kfs) {
+        result.push(command::move_to_col3);
+        result.push(command::grab_highest_r2_kfs);
+        m_map[2][1] = kfs_type::empty;
+        ++r2kfs_count;
+      }
+      if (m_map[0][1] == kfs_type::r2kfs) {
+        result.push(command::move_to_col1);
+        result.push(command::grab_highest_r2_kfs);
+        m_map[0][1] = kfs_type::empty;
+        ++r2kfs_count;
+      }
+    } else {
+      if (m_map[0][1] == kfs_type::r2kfs) {
+        result.push(command::move_to_col1);
+        result.push(command::grab_highest_r2_kfs);
+        m_map[0][1] = kfs_type::empty;
+        ++r2kfs_count;
+      }
+      if (m_map[2][1] == kfs_type::r2kfs) {
+        result.push(command::move_to_col3);
+        result.push(command::grab_highest_r2_kfs);
+        m_map[2][1] = kfs_type::empty;
+        ++r2kfs_count;
+      }
+    }
+    result.push(command::move_to_col2);
     if (m_map[1][1] == kfs_type::r2kfs) {
-      result.push(command::grab_higher_r2_kfs);
-      m_map[1][1] = kfs_type::empty;
-      ++r2kfs_count;
-    }
-    if (m_map[0][1] == kfs_type::r2kfs) {
-      result.push(command::move_left);
-      result.push(command::grab_highest_r2_kfs);
-      result.push(command::move_right);
-      m_map[0][1] = kfs_type::empty;
-      ++r2kfs_count;
-    }
-    if (m_map[2][1] == kfs_type::r2kfs) {
-      result.push(command::move_right);
-      result.push(command::grab_highest_r2_kfs);
-      result.push(command::move_left);
-      m_map[2][1] = kfs_type::empty;
-      ++r2kfs_count;
-    }
+        result.push(command::grab_higher_r2_kfs);
+        m_map[1][1] = kfs_type::empty;
+        ++r2kfs_count;
+      }
 
     m_map[0][0] = kfs_type::falsekfs;
     m_map[2][0] = kfs_type::falsekfs;

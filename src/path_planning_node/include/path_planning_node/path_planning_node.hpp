@@ -49,6 +49,18 @@ inline static void print_command(const Node* node, path_planning::command cmd) {
   case path_planning::command::complete_task:
     RCLCPP_INFO(node->get_logger(), "Complete task");
     break;
+  case path_planning::command::request_new:
+    RCLCPP_INFO(node->get_logger(), "Request new (with index)");
+    break;
+  case path_planning::command::move_to_col1:
+    RCLCPP_INFO(node->get_logger(), "Move to Col1");
+    break;
+  case path_planning::command::move_to_col2:
+    RCLCPP_INFO(node->get_logger(), "Move to Col2");
+    break;
+  case path_planning::command::move_to_col3:
+    RCLCPP_INFO(node->get_logger(), "Move to Col3");
+    break;
   default:
     RCLCPP_INFO(node->get_logger(), "Unknown command");
     break;
@@ -70,6 +82,9 @@ public:
     path_replace_kfs_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/replace_kfs", 10);
     path_no_command_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/no_command", 10);
     path_turn_around_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/turn_around_180", 10);
+    path_move_to_col1_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/move_to_col1", 10);
+    path_move_to_col2_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/move_to_col2", 10);
+    path_move_to_col3_pub_ = node_->create_publisher<std_msgs::msg::Empty>("/r2_serial/downlink/path/move_to_col3", 10);
 
     path_request_sub_ = node_->create_subscription<std_msgs::msg::Empty>(
         "/r2_serial/uplink/path_request_next", 10,
@@ -131,6 +146,15 @@ public:
     case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
       path_replace_kfs_pub_->publish(msg);
       break;
+    case path_planning::command::move_to_col1:
+      path_move_to_col1_pub_->publish(msg);
+      break;
+    case path_planning::command::move_to_col2:
+      path_move_to_col2_pub_->publish(msg);
+      break;
+    case path_planning::command::move_to_col3:
+      path_move_to_col3_pub_->publish(msg);
+      break;
     default:
       path_no_command_pub_->publish(msg);
       break;
@@ -154,6 +178,9 @@ private:
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_replace_kfs_pub_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_no_command_pub_;
   rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_turn_around_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_move_to_col1_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_move_to_col2_pub_;
+  rclcpp::Publisher<std_msgs::msg::Empty>::SharedPtr path_move_to_col3_pub_;
 
   rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr path_request_sub_;
   rclcpp::Subscription<std_msgs::msg::UInt16>::SharedPtr path_request_new_sub_;
@@ -212,6 +239,7 @@ public:
             auto grid = grid_json["grid"].get<std::vector<std::vector<int>>>();
             auto levels =
                 grid_json["level"].get<std::vector<std::vector<int>>>();
+            bool is_blue_scene = grid_json["is_blue_scene"].get<bool>();
             std::array<
                 std::array<path_planning::kfs_type, path_planning::map_height>,
                 path_planning::map_width>
@@ -234,7 +262,7 @@ public:
             }
 
             auto [commands, path] =
-                planner_->generate_commands(m_map, level_map);
+                planner_->generate_commands(m_map, level_map, is_blue_scene);
 
             {
               std::lock_guard<std::mutex> lock(command_array_mutex_);
