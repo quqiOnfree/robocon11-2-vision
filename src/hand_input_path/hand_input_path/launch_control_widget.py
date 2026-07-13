@@ -360,8 +360,12 @@ class LaunchControlWidget(QWidget):
             return
         dialog = CountdownDialog(3, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            if not ros_node.publish_startup_config(
+            if ros_node.publish_startup_config(
                     scene_index, zone, self.get_block_count(),
                     self.get_arena_load_kfs(), self.get_arena_delay()):
+                # 发送成功后自动跳转到 Color Shower 标签页
+                self._main_window.tab_widget.setCurrentWidget(
+                    self._main_window.color_shower_panel)
+            else:
                 QMessageBox.warning(self, "发送失败",
                                     "启动配置发送失败，请确认已收到起点坐标。")

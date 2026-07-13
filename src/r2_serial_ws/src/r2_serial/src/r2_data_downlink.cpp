@@ -32,6 +32,7 @@
 
 #include "r2_serial/msg/serial_packet.hpp"
 #include "r2_serial/msg/startup_config.hpp"
+#include "r2_serial/msg/color_shower.hpp"
 #include "r2_serial/serial_connector.hpp"
 #include "r2_serial/serial_protocol.hpp"
 
@@ -196,6 +197,8 @@ private:
         "topics.vision_weapon_pole_state", "/vision/weapon_pole_cmd_state_2");
     debug_msg_topic_ = declare_parameter<std::string>(
         "topics.debug_msg", "/r2_serial/uplink/debug_msg");
+    color_shower_topic_ = declare_parameter<std::string>(
+        "topics.color_shower", "/r2_serial/uplink/color_shower");
   }
 
   void initializeSerial(bool initial_attempt) {
@@ -350,6 +353,8 @@ private:
     vision_weapon_pole_state_pub_ = create_publisher<std_msgs::msg::UInt8>(
         vision_weapon_pole_state_topic_, 10);
     debug_msg_pub_ = create_publisher<std_msgs::msg::String>(debug_msg_topic_, 10);
+    color_shower_pub_ = create_publisher<r2_serial::msg::ColorShower>(
+        color_shower_topic_, 10);
 
     // 原始包入口：推荐 /r2_serial/downlink/packet，同时兼容旧 /r2/downlink/packet。
     createRawPacketSubscription(raw_packet_topic_);
@@ -620,6 +625,7 @@ private:
     publishPathRequest(packet);
     publishPathRequestNew(packet);
     publishDebugMessage(packet);
+    publishColorShower(packet);
 
     if (serial_debug_raw_) {
       const auto payload_hex = bytesToHex(packet.body_data(), packet.body_size());
@@ -692,6 +698,34 @@ private:
     debug_msg_pub_->publish(msg);
     RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
                           "MCU debug: %s", msg.data.c_str());
+  }
+
+  void publishColorShower(const packet_t &packet) {
+    if (packet.code() != protocol::kColorShower) {
+      return;
+    }
+    // payload: uint8_t R, uint8_t G, uint8_t B, char text[0..16]
+    if (packet.body_size() < 3) {
+      RCLCPP_WARN(get_logger(),
+                  "kColorShower 包太短: code=0x%04x body_size=%u",
+                  packet.code(), packet.body_size());
+      return;
+    }
+    r2_serial::msg::ColorShower msg;
+    msg.r = packet.body_data()[0];
+    msg.g = packet.body_data()[1];
+    msg.b = packet.body_data()[2];
+    // 提取文本（去除尾部 \0 填充）
+    std::string raw_text(packet.body_data() + 3,
+                         packet.body_data() + packet.body_size());
+    while (!raw_text.empty() && raw_text.back() == '\0') {
+      raw_text.pop_back();
+    }
+    msg.text = raw_text;
+    color_shower_pub_->publish(msg);
+    RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+                         "Color shower: R=%d G=%d B=%d text=\"%s\"",
+                         msg.r, msg.g, msg.b, msg.text.c_str());
   }
 
   void publishVisionStateCommand(const packet_t &packet) {
@@ -798,6 +832,7 @@ private:
   std::string path_request_new_topic_;
   std::string vision_weapon_pole_state_topic_;
   std::string debug_msg_topic_;
+  std::string color_shower_topic_;
 
   std::atomic<std::uint64_t> tx_success_count_{0};
   std::atomic<std::uint64_t> tx_failure_count_{0};
@@ -840,6 +875,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::UInt16>::SharedPtr path_request_new_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr vision_weapon_pole_state_pub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr debug_msg_pub_;
+  rclcpp::Publisher<r2_serial::msg::ColorShower>::SharedPtr color_shower_pub_;
 };
 
 int main(int argc, char **argv) {

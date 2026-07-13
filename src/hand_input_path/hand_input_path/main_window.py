@@ -20,11 +20,13 @@ try:
     from .launch_control_widget import LaunchControlWidget
     from .lidar_panel_widget import LidarPanelWidget
     from .debug_widget import DebugWidget
+    from .color_shower_widget import ColorShowerWidget
 except ImportError:
     from block_item import BlockLevel, BlockItem, BlockType, BLOCK_TYPE_DISPLAY
     from launch_control_widget import LaunchControlWidget
     from lidar_panel_widget import LidarPanelWidget
     from debug_widget import DebugWidget
+    from color_shower_widget import ColorShowerWidget
 
 
 class MainWindow(QMainWindow):
@@ -60,6 +62,10 @@ class MainWindow(QMainWindow):
         self.launch_panel = LaunchControlWidget(main_window=self)
         self.tab_widget.addTab(self.launch_panel, "Launch")
 
+        # ── Tab 4: Color ──
+        self.color_shower_panel = ColorShowerWidget()
+        self.tab_widget.addTab(self.color_shower_panel, "Color")
+
         self._set_widgets_enabled(False)
 
         # 每个 Tab 用不同颜色区分
@@ -68,6 +74,7 @@ class MainWindow(QMainWindow):
         tab_bar.setTabTextColor(1, QColor("#4CAF50"))  # Lidar 绿色
         tab_bar.setTabTextColor(2, QColor("#FF9800"))  # Debug 橙色
         tab_bar.setTabTextColor(3, QColor("#F44336"))  # Launch 红色
+        tab_bar.setTabTextColor(4, QColor("#9C27B0"))  # Color 紫色
 
     def create_grid(self, grid: list[list[BlockLevel]]):
         self.grid_items = []
@@ -178,6 +185,8 @@ class MainWindow(QMainWindow):
         sig.initial_position_signal.connect(
             self.lidar_panel.update_initial_position)
         sig.debug_msg_signal.connect(self.debug_panel.update_debug_msg)
+        sig.color_shower_signal.connect(
+            self.color_shower_panel.update_color_shower)
         # 立刻用缓存值刷新面板
         self.lidar_panel.refresh_from_cache(self.ros_node)
 

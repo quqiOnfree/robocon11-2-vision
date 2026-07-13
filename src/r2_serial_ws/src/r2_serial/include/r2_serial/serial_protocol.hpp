@@ -66,6 +66,9 @@ inline constexpr std::uint16_t kPathMoveToCol3 = 0x0320;
 // 下位机 -> 上位机：调试消息，变长 char 数据。
 inline constexpr std::uint16_t kDebugMessage = 0x0501;
 
+// 下位机 -> 上位机：彩幕显示，payload = uint8_t R, uint8_t G, uint8_t B, char text[0..16]。
+inline constexpr std::uint16_t kColorShower = 0x0502;
+
 // STM32 payload 里的 int16_t 使用小端序；协议头、长度、code、CRC 仍是大端序。
 inline void appendInt16Le(std::vector<std::uint8_t> &payload,
                           std::int16_t value) {
