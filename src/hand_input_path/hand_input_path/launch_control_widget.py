@@ -249,19 +249,15 @@ class LaunchControlWidget(QWidget):
                                 "请先在主窗口选择蓝色或红色场景！")
             return
 
-        mode = self.get_mode()
-        # 红蓝半场对应不同地图和 prior（半场对称, 与 run_competition.sh 一致）
+        requested_mode = self.get_mode()
+        # 临时隔离所有后端优化：UI 仍保留模式选项，但启动雷达时强制走最纯净 FAST-LIO 前端。
+        # 数据链路: Livox -> fast_lio/mapping.launch.py -> /Odometry -> r2_pose_reporter。
+        mode = "odometry"
         if scene_index == 0:  # 蓝方
             zone_name = "blue"
-            map_path = "maps/official_map_blue"
-            prior_x = 0.0
-            prior_y = 0.0
         else:  # 红方
             zone_name = "red"
-            map_path = "maps/official_map_red"
-            prior_x = 0.0
-            prior_y = 0.0  # 实测后替换
-        odom_topic = "/r2/global_odometry" if mode == "localization" else "/Odometry"
+        odom_topic = "/Odometry"
 
         self.radar_btn.setEnabled(False)
         self.radar_btn.setText("启动中...")
@@ -290,17 +286,10 @@ class LaunchControlWidget(QWidget):
                     "use_sim_time:=false rviz:=false",
                     tag="fast_lio")
 
-            if mode == "localization" and map_path:
-                # (5) SC-QN 全局重定位
-                _launch(
-                    f"ros2 launch fast_lio_localization_sc_qn_ros2 "
-                    f"localization_sc_qn.launch.py "
-                    f"use_sim_time:=false map_directory:={map_path} "
-                    f"use_position_prior:=true "
-                    f"expected_x_mm:={prior_x} expected_y_mm:={prior_y}",
-                    tag="sc_qn")
+            if requested_mode == "localization":
+                emit_debug_line("radar", "定位后端已临时禁用：当前只启动纯 FAST-LIO 前端 /Odometry")
 
-            # (6) simple_odom — 位姿桥梁 + 红蓝坐标镜射
+            # (5) simple_odom — 位姿桥梁，订阅纯前端 /Odometry
             _launch(
                 f"ros2 run fast_lio simple_odom --ros-args "
                 f"-p mode:={mode} -p zone:={zone_name} "
@@ -311,7 +300,7 @@ class LaunchControlWidget(QWidget):
             self.radar_btn.setText("关闭雷达")
             self.radar_btn.setStyleSheet("background-color: #FF5722; color: white;")
             QMessageBox.information(self, "雷达启动成功",
-                                    f"雷达节点已启动 (模式: {mode}, 半场: {zone_name})")
+                                    f"雷达节点已启动 (模式: pure_frontend_odometry, 半场: {zone_name})")
 
         except Exception as e:
             self.radar_btn.setText("启动雷达")

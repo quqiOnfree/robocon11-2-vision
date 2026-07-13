@@ -466,8 +466,8 @@ private:
   std::string status_service_name_;
   std::string relocalization_service_name_;
 
-  double base_offset_x_{0.1352};
-  double base_offset_y_{-0.2335};
+  double base_offset_x_{0.0847};
+  double base_offset_y_{-0.2183};
   double initial_position_stabilization_seconds_{2.0};
   double initial_position_sample_seconds_{5.0};
 
