@@ -33,7 +33,7 @@ int main () {
     kfs_map[1][2] = path_planning::kfs_type::falsekfs;
 
     path_planning planning;
-    auto [commands, path] = planning.generate_commands(kfs_map, level_map);
+    auto [commands, path] = planning.generate_commands(kfs_map, level_map, true);
     while (!commands.empty()) {
       switch (commands.front()) {
       case path_planning::command::move_forward:
@@ -68,6 +68,18 @@ int main () {
         break;
       case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
         std::cout << "Release to grab newer R2 KFS\n";
+        break;
+      case path_planning::command::request_new:
+        std::cout << "Request New (with index)\n";
+        break;
+      case path_planning::command::move_to_col1:
+        std::cout << "Move to Col1\n";
+        break;
+      case path_planning::command::move_to_col2:
+        std::cout << "Move to Col2\n";
+        break;
+      case path_planning::command::move_to_col3:
+        std::cout << "Move to Col3\n";
         break;
       default:
         std::cout << "Unknown Command\n";

@@ -157,7 +157,14 @@ int main() {
   for (const auto &map : test_maps) {
     std::cout << "Test case " << ++test_count << ":\n";
 
-    auto [commands, path] = planner.generate_commands(map, level_map);
+    for (std::size_t i = 0; i < path_planning::map_height; ++i) {
+      for (std::size_t j = 0; j < path_planning::map_width; ++j) {
+        std::cout << static_cast<int>(map[j][i]) << ' ';
+      }
+      std::cout << '\n';
+    }
+
+    auto [commands, path] = planner.generate_commands(map, level_map, true);
 
     std::cout << "Generated path:\n";
     std::queue<path_planning::path_node> temp_path = path;
@@ -201,6 +208,18 @@ int main() {
         break;
       case path_planning::command::turn_around:
         std::cout << "Turn Around\n";
+        break;
+      case path_planning::command::request_new:
+        std::cout << "Request New (with index)\n";
+        break;
+      case path_planning::command::move_to_col1:
+        std::cout << "Move to Col1\n";
+        break;
+      case path_planning::command::move_to_col2:
+        std::cout << "Move to Col2\n";
+        break;
+      case path_planning::command::move_to_col3:
+        std::cout << "Move to Col3\n";
         break;
       default:
         std::cout << "Unknown Command\n";

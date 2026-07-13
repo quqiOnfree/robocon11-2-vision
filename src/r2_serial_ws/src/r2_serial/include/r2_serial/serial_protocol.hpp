@@ -59,6 +59,9 @@ inline constexpr std::uint16_t kPathReplaceKfs = 0x031A;
 inline constexpr std::uint16_t kPathNoCommand = 0x031B;
 inline constexpr std::uint16_t kPathTurnAround180 = 0x031C;
 inline constexpr std::uint16_t kPathRequestNextNew = 0x031D;
+inline constexpr std::uint16_t kPathMoveToCol1 = 0x031E;
+inline constexpr std::uint16_t kPathMoveToCol2 = 0x031F;
+inline constexpr std::uint16_t kPathMoveToCol3 = 0x0320;
 
 // 下位机 -> 上位机：调试消息，变长 char 数据。
 inline constexpr std::uint16_t kDebugMessage = 0x0501;
