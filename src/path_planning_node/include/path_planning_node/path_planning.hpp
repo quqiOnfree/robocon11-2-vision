@@ -80,32 +80,46 @@ public:
   std::pair<std::queue<command>, std::queue<path_node>> generate_commands(
       std::array<std::array<kfs_type, map_height>, map_width> m_map,
       const std::array<std::array<map_level, map_height>, map_width> &map,
-      bool is_blue_scene)
-      const {
+      bool is_blue_scene) const {
+    decltype(m_map) init_r2kfs_pos{};
+
+    {
+      auto test_path = find_path(m_map, 0, is_blue_scene);
+      while (!test_path.empty()) {
+        auto node = std::move(test_path.front());
+        if (node.p.y == 1 && node.type == kfs_type::r2kfs) {
+          init_r2kfs_pos[node.p.x][node.p.y] = kfs_type::r2kfs;
+        } else if (node.p.y > 1) {
+          break;
+        }
+        test_path.pop();
+      }
+    }
+
     std::queue<command> result;
     std::size_t r2kfs_count = 0;
 
     if (is_blue_scene) {
-      if (m_map[2][1] == kfs_type::r2kfs) {
+      if (init_r2kfs_pos[2][1] == kfs_type::r2kfs) {
         result.push(command::move_to_col3);
         result.push(command::grab_highest_r2_kfs);
         m_map[2][1] = kfs_type::empty;
         ++r2kfs_count;
       }
-      if (m_map[0][1] == kfs_type::r2kfs) {
+      if (init_r2kfs_pos[0][1] == kfs_type::r2kfs) {
         result.push(command::move_to_col1);
         result.push(command::grab_highest_r2_kfs);
         m_map[0][1] = kfs_type::empty;
         ++r2kfs_count;
       }
     } else {
-      if (m_map[0][1] == kfs_type::r2kfs) {
+      if (init_r2kfs_pos[0][1] == kfs_type::r2kfs) {
         result.push(command::move_to_col1);
         result.push(command::grab_highest_r2_kfs);
         m_map[0][1] = kfs_type::empty;
         ++r2kfs_count;
       }
-      if (m_map[2][1] == kfs_type::r2kfs) {
+      if (init_r2kfs_pos[2][1] == kfs_type::r2kfs) {
         result.push(command::move_to_col3);
         result.push(command::grab_highest_r2_kfs);
         m_map[2][1] = kfs_type::empty;
@@ -113,7 +127,7 @@ public:
       }
     }
     result.push(command::move_to_col2);
-    if (m_map[1][1] == kfs_type::r2kfs) {
+    if (init_r2kfs_pos[1][1] == kfs_type::r2kfs) {
       result.push(command::grab_higher_r2_kfs);
       m_map[1][1] = kfs_type::empty;
       ++r2kfs_count;
@@ -123,7 +137,7 @@ public:
     m_map[2][0] = kfs_type::falsekfs;
     m_map[1][5] = kfs_type::falsekfs;
 
-    auto path = find_path(m_map);
+    auto path = find_path(m_map, r2kfs_count, is_blue_scene);
     auto commands =
         generate_commands(m_map, path, map, direction::up, r2kfs_count);
 
@@ -162,26 +176,27 @@ protected:
   };
 
   std::queue<path_node>
-  find_path(const std::array<std::array<kfs_type, map_height>, map_width> &map)
-      const {
+  find_path(const std::array<std::array<kfs_type, map_height>, map_width> &map,
+            std::size_t init_r2kfs_count, bool is_blue_scene) const {
     point start{1, 0};
     point end1{0, 5};
     point end2{2, 5};
     std::pmr::monotonic_buffer_resource local_pool_resource{256,
                                                             &pool_resource};
 
-    auto path1 = a_star(map, start, end1);
-    auto path2 = a_star(map, start, end2);
+    auto path1 = a_star(map, start, end1, init_r2kfs_count);
+    auto path2 = a_star(map, start, end2, init_r2kfs_count);
     a_star_queue_t a_star_result{&local_pool_resource};
     std::queue<path_node> result;
-    if (path1.empty() && path2.empty()) [[unlikely]] {
+    if (path1.empty() && path2.empty()) {
       return result; // No path found
     } else if (path1.empty()) {
       a_star_result = std::move(path2);
     } else if (path2.empty()) {
       a_star_result = std::move(path1);
-    } else [[likely]] {
-      if (path1.back().f_cost() <= path2.back().f_cost()) {
+    } else {
+      if (path1.back().f_cost() + (is_blue_scene ? 1 : 0) <=
+          path2.back().f_cost() + (!is_blue_scene ? 1 : 0)) {
         a_star_result = std::move(path1);
       } else {
         a_star_result = std::move(path2);
@@ -242,7 +257,8 @@ protected:
 
   a_star_queue_t
   a_star(const std::array<std::array<kfs_type, map_height>, map_width> &m_map,
-         const point &start, const point &end) const {
+         const point &start, const point &end,
+         std::size_t init_r2kfs_count) const {
     std::pmr::monotonic_buffer_resource local_pool_resource{8192,
                                                             &pool_resource};
     std::priority_queue<a_star_queue_t, std::pmr::vector<a_star_queue_t>,
@@ -279,17 +295,16 @@ protected:
 
       for (int i = 0; i < 4; ++i) {
         auto generate_next_path = [&](point next_point) {
-          if (current_node.walked[next_point.x][next_point.y]) [[unlikely]] {
+          if (current_node.walked[next_point.x][next_point.y]) {
             return; // Already walked
           }
           const kfs_type next_type = get_kfs_type(next_point);
-          if (next_type == kfs_type::falsekfs) [[unlikely]] {
+          if (next_type == kfs_type::falsekfs) {
             return; // Obstacle
           }
           a_star_node next_node{next_point,
                                 next_type,
-                                current_node.g_cost + 1 +
-                                    (next_type == kfs_type::r1kfs ? 1 : 0),
+                                current_node.g_cost + 1,
                                 get_manhattan_distance(next_point, end),
                                 current_node.walked,
                                 current_node.walked_r2kfs};
@@ -332,7 +347,7 @@ protected:
           if (r2kfs_count == 0) {
             next_node.g_cost += 1;
           }
-          std::size_t walked_r2kfs_count = 0;
+          std::size_t walked_r2kfs_count = init_r2kfs_count;
           for (int i = 0; i < static_cast<int>(map_width); ++i) {
             for (int j = 0; j < static_cast<int>(map_height); ++j) {
               if (current_node.walked[i][j] &&
@@ -342,7 +357,7 @@ protected:
             }
           }
           if (walked_r2kfs_count > max_r2kfs_can_be_grabed) {
-            ++next_node.g_cost;
+            next_node.g_cost += 2;
           }
           next_node.walked[next_point.x][next_point.y] = true;
           a_star_queue_t new_path{&local_pool_resource};
@@ -597,7 +612,8 @@ protected:
         }
       };
 
-      auto update_commands = [&](const std::optional<point> &op, direction dire) {
+      auto update_commands = [&](const std::optional<point> &op,
+                                 direction dire) {
         if (!op.has_value()) {
           return;
         }
@@ -606,6 +622,10 @@ protected:
              (ext_r2kfs_count + r2kfs_must_be_grabed <
               max_r2kfs_can_be_grabed)) &&
             get_kfs(p) == kfs_type::r2kfs) {
+          if (r2kfs_must_be_grabed > max_r2kfs_can_be_grabed &&
+              r2kfs_grabbed + max_r2kfs_can_be_grabed <= r2kfs_must_be_grabed) {
+            commands.push(command::release_r2_kfs_and_grab_newer_r2_kfs);
+          }
           switch (dire) {
           case direction::up:
             break;
@@ -637,11 +657,6 @@ protected:
           ++r2kfs_grabbed;
           if (must_be_walked_points.find(p) == must_be_walked_points.end()) {
             ++ext_r2kfs_count;
-          }
-          if (r2kfs_must_be_grabed > max_r2kfs_can_be_grabed &&
-                     r2kfs_grabbed >= max_r2kfs_can_be_grabed &&
-                     r2kfs_grabbed != r2kfs_must_be_grabed) {
-            commands.push(command::release_r2_kfs_and_grab_newer_r2_kfs);
           }
         }
       };

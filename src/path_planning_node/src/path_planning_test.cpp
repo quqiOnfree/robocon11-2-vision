@@ -209,6 +209,9 @@ int main() {
       case path_planning::command::turn_around:
         std::cout << "Turn Around\n";
         break;
+      case path_planning::command::release_r2_kfs_and_grab_newer_r2_kfs:
+        std::cout << "Release to grab newer R2 KFS\n";
+        break;
       case path_planning::command::request_new:
         std::cout << "Request New (with index)\n";
         break;
