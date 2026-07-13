@@ -9,7 +9,7 @@ from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from std_msgs.msg import String, UInt16, Bool, Float64
 from nav_msgs.msg import Odometry
-from r2_serial.msg import CurrentPose, InitialPosition, StartupConfig
+from r2_serial.msg import ColorShower, CurrentPose, InitialPosition, StartupConfig
 
 
 class PathSignalEmitter(QObject):
@@ -21,6 +21,7 @@ class PathSignalEmitter(QObject):
     mcu_event_signal = Signal(int)                     # event_code
     debug_msg_signal = Signal(str)                     # MCU debug message
     initial_position_signal = Signal(int, int)          # x_mm, y_mm (启动坐标)
+    color_shower_signal = Signal(int, int, int, str)   # r, g, b, text
 
 
 class Ros2Node(Node):
@@ -61,6 +62,9 @@ class Ros2Node(Node):
             UInt16, "/r2_serial/uplink/event_code", self.uplink_event_callback, 10)
         self.debug_msg_sub = self.create_subscription(
             String, "/r2_serial/uplink/debug_msg", self.debug_msg_callback, 10)
+        self.color_shower_sub = self.create_subscription(
+            ColorShower, "/r2_serial/uplink/color_shower",
+            self.color_shower_callback, 10)
 
         # 启动坐标（transient_local，仅发布一次）
         initial_position_topic = self.declare_parameter(
@@ -194,6 +198,10 @@ class Ros2Node(Node):
 
     def debug_msg_callback(self, msg: String):
         self.path_signal.debug_msg_signal.emit(msg.data)
+
+    def color_shower_callback(self, msg: ColorShower):
+        self.path_signal.color_shower_signal.emit(
+            int(msg.r), int(msg.g), int(msg.b), str(msg.text))
 
     def check_connection(self):
         """检查下发节点是否在线（由 QTimer 周期调用）。"""
