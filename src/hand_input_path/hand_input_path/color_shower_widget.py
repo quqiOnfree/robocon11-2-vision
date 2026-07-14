@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor, QPalette
 
 
 class ColorShowerWidget(QWidget):
@@ -15,6 +15,9 @@ class ColorShowerWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
 
+        self._bg_color = QColor(0, 0, 0)
+        self._fg_color = QColor(255, 255, 255)
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -25,34 +28,31 @@ class ColorShowerWidget(QWidget):
         self._label.setWordWrap(True)
         layout.addWidget(self._label)
 
-        # 初始状态：黑色背景
         self.setAutoFillBackground(True)
-        self._apply_colors(0, 0, 0)
+        self._apply_bg_color()
+        self._apply_label_color()
 
     def update_color_shower(self, r: int, g: int, b: int, text: str):
-        """更新彩幕显示。
-
-        Args:
-            r: 红色分量 (0-255)
-            g: 绿色分量 (0-255)
-            b: 蓝色分量 (0-255)
-            text: 居中显示的文字（最多 16 字符）
-        """
+        """更新彩幕显示。"""
         r = max(0, min(255, r))
         g = max(0, min(255, g))
         b = max(0, min(255, b))
         text = text[:16]
 
-        self._apply_colors(r, g, b)
+        self._bg_color = QColor(r, g, b)
+        self._fg_color = QColor(255 - r, 255 - g, 255 - b)
+        self._apply_bg_color()
+        self._apply_label_color()
         self._label.setText(text if text else "")
 
-    def _apply_colors(self, r: int, g: int, b: int):
-        """设置背景颜色和反色文字。"""
-        bg_color = f"rgb({r},{g},{b})"
-        inv_r, inv_g, inv_b = 255 - r, 255 - g, 255 - b
-        fg_color = f"rgb({inv_r},{inv_g},{inv_b})"
+    def _apply_bg_color(self):
+        """通过 QPalette 设置 widget 背景色，避免 stylesheet 对子控件的副作用。"""
+        pal = self.palette()
+        pal.setColor(QPalette.Window, self._bg_color)
+        self.setPalette(pal)
 
-        self.setStyleSheet(f"background-color: {bg_color};")
+    def _apply_label_color(self):
         self._label.setStyleSheet(
-            f"color: {fg_color}; background-color: transparent;"
+            f"color: {self._fg_color.name()};"
+            f"background-color: transparent;"
         )
