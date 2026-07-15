@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   msg/CurrentPose.msg
   msg/SerialPacket.msg
   msg/StartupConfig.msg
+  msg/ColorShower.msg
 )
 ament_export_dependencies(rosidl_default_runtime)
 ament_export_include_directories(include)
