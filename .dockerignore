@@ -1,0 +1,37 @@
+# Git
+.git
+.gitignore
+.gitmodules
+
+# Build outputs
+build/
+log/
+install/
+*.o
+*.a
+*.so
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*
+
+# GitHub
+.github/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.eggs/
