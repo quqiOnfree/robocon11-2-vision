@@ -46,4 +46,4 @@ RUN pip3 install pyside6
 WORKDIR /app
 COPY ./src ./src
 RUN /bin/bash -c "source /opt/ros/humble/setup.bash && colcon build && rm -rf build/ log/"
-CMD /bin/bash -c "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 run hand_input_path hand_input_path_node"
+CMD ["/bin/bash", "-c", "source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 run hand_input_path hand_input_path_node"]
