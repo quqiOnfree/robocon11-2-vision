@@ -36,3 +36,7 @@ lapack/reference
 .settings
 Makefile
 !ci/build.gitlab-ci.yml
+
+# Eigen codebase: Core is a directory, not build artifact
+!Core/
+!Core/*
